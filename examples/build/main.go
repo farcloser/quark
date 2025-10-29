@@ -28,25 +28,33 @@ func main() {
 	//	Build()
 
 	// Define local buildkit nodes for multi-platform builds
-	amd64Builder := plan.BuildNode("amd64-builder").
+	amd64Builder, err := plan.BuildNode("amd64-builder").
 		Endpoint("localhost").
 		Platform(sdk.PlatformAMD64).
 		Build()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create amd64 build node")
+	}
 
-	arm64Builder := plan.BuildNode("arm64-builder").
+	arm64Builder, err := plan.BuildNode("arm64-builder").
 		Endpoint("localhost").
 		Platform(sdk.PlatformARM64).
 		Build()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create arm64 build node")
+	}
 
 	// Build multi-platform image using local docker buildx
 	// Replace with your actual image tag
-	plan.Build("example-build").
+	if _, err := plan.Build("example-build").
 		Context(".").
 		Dockerfile("Dockerfile").
 		Node(amd64Builder).
 		Node(arm64Builder).
 		Tag("ghcr.io/myorg/myimage:latest").
-		Build()
+		Build(); err != nil {
+		log.Fatal().Err(err).Msg("failed to create build")
+	}
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {

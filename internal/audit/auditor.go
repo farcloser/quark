@@ -2,6 +2,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -72,12 +73,12 @@ type Result struct {
 }
 
 // AuditDockerfile audits a Dockerfile with hadolint.
-func (auditor *Auditor) AuditDockerfile(dockerfilePath string) (*Result, error) {
+func (auditor *Auditor) AuditDockerfile(ctx context.Context, dockerfilePath string) (*Result, error) {
 	auditor.log.Info().
 		Str("dockerfile", dockerfilePath).
 		Msg("auditing Dockerfile with hadolint")
 
-	cmd := exec.Command("hadolint", "--format", "json", dockerfilePath)
+	cmd := exec.CommandContext(ctx, "hadolint", "--format", "json", dockerfilePath)
 	output, err := cmd.CombinedOutput()
 
 	// hadolint returns non-zero when issues found
@@ -103,7 +104,7 @@ func (auditor *Auditor) AuditDockerfile(dockerfilePath string) (*Result, error) 
 }
 
 // AuditImage audits an image with dockle.
-func (auditor *Auditor) AuditImage(imageRef string, opts ImageAuditOptions) (*Result, error) {
+func (auditor *Auditor) AuditImage(ctx context.Context, imageRef string, opts ImageAuditOptions) (*Result, error) {
 	// Ensure dockle is installed
 	docklePath, err := auditor.installer.Ensure(tools.Dockle)
 	if err != nil {
@@ -118,7 +119,7 @@ func (auditor *Auditor) AuditImage(imageRef string, opts ImageAuditOptions) (*Re
 	args := []string{"--format", "json", "--exit-code", "1", imageRef}
 
 	//nolint:gosec // Image ref is from user config
-	cmd := exec.Command(docklePath, args...)
+	cmd := exec.CommandContext(ctx, docklePath, args...)
 
 	// Set credentials via environment variables to avoid exposing in process list
 	// DOCKLE_AUTH_URL scopes credentials to the specific registry

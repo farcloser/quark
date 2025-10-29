@@ -2,8 +2,8 @@ package sdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -11,17 +11,18 @@ import (
 	"github.com/farcloser/quark/ssh"
 )
 
-var errNoBuildNodesConfigured = errors.New("no build nodes configured")
-
 // Build represents a container image build operation.
 type Build struct {
-	name       string
+	opName     string
 	context    string
 	dockerfile string
 	nodes      []*BuildNode
-	registry   *Registry
 	tag        string
+	timeout    time.Duration
 	log        zerolog.Logger
+
+	// sshPool is set by executor before execution
+	sshPool *ssh.Pool
 }
 
 // BuildBuilder builds a Build.
@@ -51,13 +52,6 @@ func (builder *BuildBuilder) Node(node *BuildNode) *BuildBuilder {
 	return builder
 }
 
-// Registry sets the target registry.
-func (builder *BuildBuilder) Registry(registry *Registry) *BuildBuilder {
-	builder.build.registry = registry
-
-	return builder
-}
-
 // Tag sets the image tag.
 func (builder *BuildBuilder) Tag(tag string) *BuildBuilder {
 	builder.build.tag = tag
@@ -65,10 +59,18 @@ func (builder *BuildBuilder) Tag(tag string) *BuildBuilder {
 	return builder
 }
 
+// Timeout sets the operation timeout.
+// If not set, the operation will use the context timeout from Plan.Execute().
+func (builder *BuildBuilder) Timeout(duration time.Duration) *BuildBuilder {
+	builder.build.timeout = duration
+
+	return builder
+}
+
 // Build validates and adds the build to the plan.
-func (builder *BuildBuilder) Build() *Build {
+func (builder *BuildBuilder) Build() (*Build, error) {
 	if builder.build.context == "" {
-		builder.build.log.Fatal().Msg("build context is required")
+		return nil, ErrBuildContextRequired
 	}
 
 	if builder.build.dockerfile == "" {
@@ -76,22 +78,30 @@ func (builder *BuildBuilder) Build() *Build {
 	}
 
 	if len(builder.build.nodes) == 0 {
-		builder.build.log.Fatal().Msg("at least one build node is required")
+		return nil, ErrBuildNodeRequired
 	}
 
 	// Registry is optional for local builds
 	// Multi-platform builds with --push require registry credentials
 
 	if builder.build.tag == "" {
-		builder.build.log.Fatal().Msg("build tag is required")
+		return nil, ErrBuildTagRequired
 	}
 
 	builder.plan.builds = append(builder.plan.builds, builder.build)
+	builder.plan.operations = append(builder.plan.operations, builder.build)
 
-	return builder.build
+	return builder.build, nil
 }
 
-func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
+func (build *Build) execute(ctx context.Context) error {
+	// Apply timeout if configured
+	if build.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, build.timeout)
+		defer cancel()
+	}
+
 	build.log.Info().
 		Str("context", build.context).
 		Str("tag", build.tag).
@@ -106,12 +116,12 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 	// Use first node for multi-platform build
 	// (buildx can handle multi-platform from single builder)
 	if len(build.nodes) == 0 {
-		return errNoBuildNodesConfigured
+		return ErrNoBuildNodesConfigured
 	}
 
 	firstNode := build.nodes[0]
 
-	sshClient, err := sshPool.GetClient(firstNode.endpoint)
+	sshClient, err := build.sshPool.GetClient(firstNode.endpoint)
 	if err != nil {
 		return fmt.Errorf("failed to connect to build node: %w", err)
 	}
@@ -120,7 +130,7 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 	bkClient := buildkit.NewClient(sshClient, build.log)
 
 	// Upload build context
-	remotePath := "/tmp/quark-build-" + build.name
+	remotePath := "/tmp/quark-build-" + build.opName
 	if err := bkClient.UploadContext(build.context, remotePath); err != nil {
 		return fmt.Errorf("failed to upload build context: %w", err)
 	}
@@ -144,4 +154,9 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 		Msg("build complete")
 
 	return nil
+}
+
+// operationName returns the build operation name (implements operation interface).
+func (build *Build) operationName() string {
+	return build.opName
 }

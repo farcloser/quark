@@ -57,12 +57,12 @@ func (builder *ImageBuilder) Digest(digest string) *ImageBuilder {
 }
 
 // Build validates and returns the Image.
-func (builder *ImageBuilder) Build() *Image {
+func (builder *ImageBuilder) Build() (*Image, error) {
 	if builder.image.name == "" {
-		builder.image.log.Fatal().Msg("image name is required")
+		return nil, ErrImageNameRequired
 	}
 
-	return builder.image
+	return builder.image, nil
 }
 
 // Name returns the image name.
@@ -86,25 +86,25 @@ func (img *Image) Digest() string {
 }
 
 // Returns: "domain/name:version".
-func (img *Image) tagRef() string {
+func (img *Image) tagRef() (string, error) {
 	if img.version == "" {
-		img.log.Fatal().Msg("cannot create tag reference without version")
+		return "", fmt.Errorf("%w for image %q", ErrImageVersionRequired, img.name)
 	}
 
 	// Normalize domain (empty → docker.io)
 	domain := normalizeDomain(img.domain)
 
-	return fmt.Sprintf("%s/%s:%s", domain, img.name, img.version)
+	return fmt.Sprintf("%s/%s:%s", domain, img.name, img.version), nil
 }
 
 // Returns: "domain/name@digest".
-func (img *Image) digestRef() string {
+func (img *Image) digestRef() (string, error) {
 	if img.digest == "" {
-		img.log.Fatal().Msg("cannot create digest reference without digest")
+		return "", fmt.Errorf("%w for image %q", ErrImageDigestRequired, img.name)
 	}
 
 	// Normalize domain (empty → docker.io)
 	domain := normalizeDomain(img.domain)
 
-	return fmt.Sprintf("%s/%s@%s", domain, img.name, img.digest)
+	return fmt.Sprintf("%s/%s@%s", domain, img.name, img.digest), nil
 }

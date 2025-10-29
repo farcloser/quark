@@ -2,36 +2,78 @@ package sdk
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/farcloser/quark/internal/audit"
 )
 
-var errAuditFoundIssues = errors.New("audit found issues")
-
 // AuditRuleSet represents audit rule severity.
-type AuditRuleSet string
+//
+//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
+type AuditRuleSet struct {
+	value string
+}
 
-const (
+//nolint:gochecknoglobals // AuditRuleSet enum pattern requires global variables
+var (
 	// RuleSetStrict represents strict audit rules.
-	RuleSetStrict AuditRuleSet = "strict"
+	RuleSetStrict = AuditRuleSet{"strict"}
 	// RuleSetRecommended represents recommended audit rules.
-	RuleSetRecommended AuditRuleSet = "recommended"
+	RuleSetRecommended = AuditRuleSet{"recommended"}
 	// RuleSetMinimal represents minimal audit rules.
-	RuleSetMinimal AuditRuleSet = "minimal"
+	RuleSetMinimal = AuditRuleSet{"minimal"}
 )
+
+// String returns the string representation of the rule set.
+func (r AuditRuleSet) String() string {
+	return r.value
+}
+
+// MarshalJSON implements json.Marshaler for AuditRuleSet.
+func (r AuditRuleSet) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // Standard library JSON marshaling
+	return json.Marshal(r.value)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for AuditRuleSet.
+func (r *AuditRuleSet) UnmarshalJSON(data []byte) error {
+	var str string
+	//nolint:wrapcheck // Standard library JSON unmarshaling
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	// Normalize to lowercase
+	normalized := strings.ToLower(str)
+
+	switch normalized {
+	case "strict":
+		r.value = "strict"
+	case "recommended":
+		r.value = "recommended"
+	case "minimal":
+		r.value = "minimal"
+	default:
+		return fmt.Errorf("%w: %q (valid: strict, recommended, minimal)", ErrInvalidAuditRuleSet, str)
+	}
+
+	return nil
+}
 
 // Audit represents a Dockerfile and image quality audit.
 type Audit struct {
-	name         string
+	opName       string
 	dockerfile   string
 	image        *Image
 	registry     *Registry
 	ruleSet      AuditRuleSet
 	ignoreChecks []string
+	timeout      time.Duration
 	log          zerolog.Logger
 }
 
@@ -72,31 +114,53 @@ func (builder *AuditBuilder) IgnoreChecks(checks ...string) *AuditBuilder {
 	return builder
 }
 
+// Timeout sets the operation timeout.
+// If not set, the operation will use the context timeout from Plan.Execute().
+func (builder *AuditBuilder) Timeout(duration time.Duration) *AuditBuilder {
+	builder.audit.timeout = duration
+
+	return builder
+}
+
 // Build validates and adds the audit to the plan.
-func (builder *AuditBuilder) Build() *Audit {
+func (builder *AuditBuilder) Build() (*Audit, error) {
 	if builder.audit.dockerfile == "" && builder.audit.image == nil {
-		builder.audit.log.Fatal().Msg("audit requires either dockerfile or image")
+		return nil, ErrAuditSourceRequired
 	}
 
-	if builder.audit.ruleSet == "" {
+	if builder.audit.ruleSet == (AuditRuleSet{}) {
 		builder.audit.ruleSet = RuleSetStrict
 	}
 
 	builder.plan.audits = append(builder.plan.audits, builder.audit)
+	builder.plan.operations = append(builder.plan.operations, builder.audit)
 
-	return builder.audit
+	return builder.audit, nil
 }
 
-func (auditJob *Audit) execute(_ context.Context) error {
+func (auditJob *Audit) execute(ctx context.Context) error {
+	// Apply timeout if configured
+	if auditJob.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, auditJob.timeout)
+		defer cancel()
+	}
+
 	var imageRef string
+
 	if auditJob.image != nil {
-		imageRef = auditJob.image.tagRef()
+		ref, err := auditJob.image.tagRef()
+		if err != nil {
+			return fmt.Errorf("failed to build image reference: %w", err)
+		}
+
+		imageRef = ref
 	}
 
 	auditJob.log.Info().
 		Str("dockerfile", auditJob.dockerfile).
 		Str("image", imageRef).
-		Str("ruleset", string(auditJob.ruleSet)).
+		Str("ruleset", auditJob.ruleSet.String()).
 		Msg("auditing")
 
 	auditor := audit.NewAuditor(auditJob.log)
@@ -104,7 +168,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 
 	// Audit Dockerfile if provided
 	if auditJob.dockerfile != "" {
-		result, err := auditor.AuditDockerfile(auditJob.dockerfile)
+		result, err := auditor.AuditDockerfile(ctx, auditJob.dockerfile)
 		if err != nil {
 			return fmt.Errorf("failed to audit Dockerfile: %w", err)
 		}
@@ -119,7 +183,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 	// Audit image if provided
 	if auditJob.image != nil {
 		opts := audit.ImageAuditOptions{
-			RuleSet:      string(auditJob.ruleSet),
+			RuleSet:      auditJob.ruleSet.String(),
 			IgnoreChecks: auditJob.ignoreChecks,
 		}
 
@@ -129,7 +193,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 			opts.Password = auditJob.registry.password
 		}
 
-		result, err := auditor.AuditImage(imageRef, opts)
+		result, err := auditor.AuditImage(ctx, imageRef, opts)
 		if err != nil {
 			return fmt.Errorf("failed to audit image: %w", err)
 		}
@@ -144,10 +208,15 @@ func (auditJob *Audit) execute(_ context.Context) error {
 	if !allPassed {
 		auditJob.log.Warn().Msg("audit found issues")
 
-		return errAuditFoundIssues
+		return ErrAuditFoundIssues
 	}
 
 	auditJob.log.Info().Msg("audit passed")
 
 	return nil
+}
+
+// operationName returns the audit operation name (implements operation interface).
+func (auditJob *Audit) operationName() string {
+	return auditJob.opName
 }

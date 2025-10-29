@@ -33,18 +33,18 @@ func (builder *BuildNodeBuilder) Platform(platform Platform) *BuildNodeBuilder {
 }
 
 // Build validates and adds the build node to the plan.
-func (builder *BuildNodeBuilder) Build() *BuildNode {
+func (builder *BuildNodeBuilder) Build() (*BuildNode, error) {
 	if builder.node.endpoint == "" {
-		builder.node.log.Fatal().Msg("buildnode endpoint is required")
+		return nil, ErrBuildNodeEndpointRequired
 	}
 
-	if builder.node.platform == "" {
-		builder.node.log.Fatal().Msg("buildnode platform is required")
+	if builder.node.platform == (Platform{}) {
+		return nil, ErrBuildNodePlatformRequired
 	}
 
 	builder.plan.buildNodes = append(builder.plan.buildNodes, builder.node)
 
-	return builder.node
+	return builder.node, nil
 }
 
 // Name returns the node name.

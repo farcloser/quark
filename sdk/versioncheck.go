@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -10,11 +9,9 @@ import (
 	"github.com/farcloser/quark/internal/version"
 )
 
-var errDigestMismatch = errors.New("DIGEST MISMATCH (possible tag mutation or supply chain attack)")
-
 // VersionCheck represents a version check operation.
 type VersionCheck struct {
-	name     string
+	opName   string
 	image    *Image
 	registry *Registry
 	log      zerolog.Logger
@@ -47,18 +44,19 @@ func (builder *VersionCheckBuilder) Source(image *Image) *VersionCheckBuilder {
 }
 
 // Build validates and adds the version check to the plan.
-func (builder *VersionCheckBuilder) Build() *VersionCheck {
+func (builder *VersionCheckBuilder) Build() (*VersionCheck, error) {
 	if builder.check.image == nil {
-		builder.check.log.Fatal().Msg("version check image is required")
+		return nil, ErrVersionCheckImageRequired
 	}
 
 	if builder.check.image.version == "" {
-		builder.check.log.Fatal().Msg("version check image must have version specified")
+		return nil, ErrVersionCheckVersionRequired
 	}
 
 	builder.plan.versionChecks = append(builder.plan.versionChecks, builder.check)
+	builder.plan.operations = append(builder.plan.operations, builder.check)
 
-	return builder.check
+	return builder.check, nil
 }
 
 func (check *VersionCheck) execute(_ context.Context) error {
@@ -79,7 +77,10 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	checker := version.NewChecker(username, password, check.log)
 
 	// Use tagRef to query what the tag points to
-	tagReference := img.tagRef()
+	tagReference, err := img.tagRef()
+	if err != nil {
+		return fmt.Errorf("failed to build tag reference: %w", err)
+	}
 
 	// Verify current version digest if provided
 	if img.digest != "" {
@@ -101,7 +102,7 @@ func (check *VersionCheck) execute(_ context.Context) error {
 
 			return fmt.Errorf(
 				"%w: current version %s points to %s, expected %s",
-				errDigestMismatch,
+				ErrDigestMismatch,
 				tagReference,
 				actualDigest,
 				img.digest,
@@ -183,4 +184,9 @@ func (check *VersionCheck) UpdateAvailable() bool {
 // Executed returns whether the version check has been executed.
 func (check *VersionCheck) Executed() bool {
 	return check.executed
+}
+
+// operationName returns the version check operation name (implements operation interface).
+func (check *VersionCheck) operationName() string {
+	return check.opName
 }

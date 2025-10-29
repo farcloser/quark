@@ -1,6 +1,10 @@
 package sdk
 
 import (
+	"fmt"
+	"net"
+	"strings"
+
 	"github.com/rs/zerolog"
 
 	"github.com/farcloser/quark/internal/registry"
@@ -34,16 +38,73 @@ func (builder *RegistryBuilder) Password(password string) *RegistryBuilder {
 	return builder
 }
 
+const maxHostnameLength = 253 // RFC 1035 maximum hostname length
+
+// isValidRegistryDomain validates a registry domain using lightweight checks.
+// Accepts hostnames, IP addresses, and optional port numbers.
+func isValidRegistryDomain(domain string) bool {
+	// Empty domain is valid (normalizes to docker.io)
+	if domain == "" {
+		return true
+	}
+
+	// Split host and port if present
+	host, _, err := net.SplitHostPort(domain)
+	if err != nil {
+		// No port present, use domain as host
+		host = domain
+	}
+
+	// Check if it's a valid IP address
+	if net.ParseIP(host) != nil {
+		return true
+	}
+
+	// Check if it's a valid hostname (basic format check)
+	// Must not be empty, must not start/end with hyphen or dot
+	if len(host) == 0 || len(host) > maxHostnameLength {
+		return false
+	}
+
+	if strings.HasPrefix(host, "-") || strings.HasSuffix(host, "-") {
+		return false
+	}
+
+	if strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
+		return false
+	}
+
+	// Must contain only valid hostname characters
+	for _, char := range host {
+		isLower := char >= 'a' && char <= 'z'
+		isUpper := char >= 'A' && char <= 'Z'
+		isDigit := char >= '0' && char <= '9'
+		isSpecial := char == '.' || char == '-'
+		isValid := isLower || isUpper || isDigit || isSpecial
+
+		if !isValid {
+			return false
+		}
+	}
+
+	return true
+}
+
 // Build validates and stores the registry in the plan's registry collection.
 // Returns the Registry for direct use (e.g., version checking before plan execution).
-func (builder *RegistryBuilder) Build() *Registry {
+func (builder *RegistryBuilder) Build() (*Registry, error) {
+	// Validate domain format
+	if !isValidRegistryDomain(builder.registry.host) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidRegistryDomain, builder.registry.host)
+	}
+
 	// Normalize the domain (empty string → docker.io)
 	normalizedDomain := normalizeDomain(builder.registry.host)
 
 	// Store in plan's registry map keyed by normalized domain
 	builder.plan.registries[normalizedDomain] = builder.registry
 
-	return builder.registry
+	return builder.registry, nil
 }
 
 // Host returns the registry host.

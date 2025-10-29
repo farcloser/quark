@@ -33,9 +33,8 @@ type opItemResponse struct {
 func AuthenticateOp(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, opCLI, "signin")
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to authenticate with 1Password: %w\nOutput: %s", err, string(output))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to authenticate with 1Password: %w (check 1Password authentication)", err)
 	}
 
 	return nil
@@ -75,7 +74,7 @@ func GetSecretDocument(ctx context.Context, reference string) ([]byte, error) {
 	item := parts[1]
 
 	if vault == "" || item == "" {
-		return nil, fmt.Errorf("%w: %q", ErrDocumentReferenceEmptyParts, reference)
+		return nil, ErrDocumentReferenceEmptyParts
 	}
 
 	// Use op document get for retrieving document content
@@ -84,11 +83,11 @@ func GetSecretDocument(ctx context.Context, reference string) ([]byte, error) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get document %q: %w\nOutput: %s", reference, err, string(output))
+		return nil, fmt.Errorf("failed to get document: %w (check 1Password authentication)", err)
 	}
 
 	if len(output) == 0 {
-		return nil, fmt.Errorf("%w: %q", ErrDocumentEmpty, reference)
+		return nil, ErrDocumentEmpty
 	}
 
 	return output, nil
@@ -147,14 +146,14 @@ func GetSecret(ctx context.Context, itemRef string, fields []string) (map[string
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get item %q: %w\nOutput: %s", itemRef, err, string(output))
+		return nil, fmt.Errorf("failed to get item: %w (check 1Password authentication)", err)
 	}
 
 	// Parse JSON response
 	var itemData opItemResponse
 
 	if err := json.Unmarshal(output, &itemData); err != nil {
-		return nil, fmt.Errorf("failed to parse item JSON for %q: %w", itemRef, err)
+		return nil, fmt.Errorf("failed to parse item JSON: %w (check item format in 1Password)", err)
 	}
 
 	// Build field map
@@ -169,7 +168,7 @@ func GetSecret(ctx context.Context, itemRef string, fields []string) (map[string
 	for _, fieldName := range fields {
 		value, found := fieldMap[fieldName]
 		if !found {
-			return nil, fmt.Errorf("%w: %q in item %q", ErrItemFieldNotFound, fieldName, itemRef)
+			return nil, fmt.Errorf("%w: %q in item", ErrItemFieldNotFound, fieldName)
 		}
 
 		result[fieldName] = value
