@@ -122,7 +122,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/the-agent-c-ai)
+        - prefix(github.com/farcloser)
         - localmodule
       no-inline-comments: true
       no-prefix-comments: true

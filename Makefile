@@ -1,4 +1,4 @@
-ORG_PREFIXES := "github.com/the-agent-c-ai"
+ORG_PREFIXES := "github.com/farcloser"
 ICON := "🧿"
 
 MAKEFILE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
