@@ -38,7 +38,7 @@ func (builder *BuildNodeBuilder) Build() *BuildNode {
 		builder.node.log.Fatal().Msg("buildnode endpoint is required")
 	}
 
-	if builder.node.platform == "" {
+	if builder.node.platform == (Platform{}) {
 		builder.node.log.Fatal().Msg("buildnode platform is required")
 	}
 

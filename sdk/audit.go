@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -10,19 +9,24 @@ import (
 	"github.com/farcloser/quark/internal/audit"
 )
 
-var errAuditFoundIssues = errors.New("audit found issues")
-
 // AuditRuleSet represents audit rule severity.
-type AuditRuleSet string
+type AuditRuleSet struct {
+	value string
+}
 
-const (
+var (
 	// RuleSetStrict represents strict audit rules.
-	RuleSetStrict AuditRuleSet = "strict"
+	RuleSetStrict = AuditRuleSet{"strict"}
 	// RuleSetRecommended represents recommended audit rules.
-	RuleSetRecommended AuditRuleSet = "recommended"
+	RuleSetRecommended = AuditRuleSet{"recommended"}
 	// RuleSetMinimal represents minimal audit rules.
-	RuleSetMinimal AuditRuleSet = "minimal"
+	RuleSetMinimal = AuditRuleSet{"minimal"}
 )
+
+// String returns the string representation of the rule set.
+func (r AuditRuleSet) String() string {
+	return r.value
+}
 
 // Audit represents a Dockerfile and image quality audit.
 type Audit struct {
@@ -78,7 +82,7 @@ func (builder *AuditBuilder) Build() *Audit {
 		builder.audit.log.Fatal().Msg("audit requires either dockerfile or image")
 	}
 
-	if builder.audit.ruleSet == "" {
+	if builder.audit.ruleSet == (AuditRuleSet{}) {
 		builder.audit.ruleSet = RuleSetStrict
 	}
 
@@ -96,7 +100,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 	auditJob.log.Info().
 		Str("dockerfile", auditJob.dockerfile).
 		Str("image", imageRef).
-		Str("ruleset", string(auditJob.ruleSet)).
+		Str("ruleset", auditJob.ruleSet.String()).
 		Msg("auditing")
 
 	auditor := audit.NewAuditor(auditJob.log)
@@ -119,7 +123,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 	// Audit image if provided
 	if auditJob.image != nil {
 		opts := audit.ImageAuditOptions{
-			RuleSet:      string(auditJob.ruleSet),
+			RuleSet:      auditJob.ruleSet.String(),
 			IgnoreChecks: auditJob.ignoreChecks,
 		}
 
@@ -144,7 +148,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 	if !allPassed {
 		auditJob.log.Warn().Msg("audit found issues")
 
-		return errAuditFoundIssues
+		return ErrAuditFoundIssues
 	}
 
 	auditJob.log.Info().Msg("audit passed")

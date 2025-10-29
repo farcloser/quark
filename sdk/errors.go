@@ -37,3 +37,30 @@ var (
 	// ErrItemFieldNotFound indicates requested field not found in item.
 	ErrItemFieldNotFound = errors.New("field not found in item")
 )
+
+// Build errors.
+var (
+	// ErrNoBuildNodesConfigured indicates no build nodes were added to a build operation.
+	ErrNoBuildNodesConfigured = errors.New("no build nodes configured")
+)
+
+// Scan errors.
+var (
+	// ErrScanMustHaveDigest indicates scan image requires digest specification.
+	ErrScanMustHaveDigest = errors.New("scan image MUST have digest specified (scanning by tag alone is not allowed)")
+
+	// ErrVulnerabilitiesFound indicates vulnerabilities were found at or above threshold.
+	ErrVulnerabilitiesFound = errors.New("vulnerabilities found at or above threshold")
+)
+
+// Audit errors.
+var (
+	// ErrAuditFoundIssues indicates audit found issues.
+	ErrAuditFoundIssues = errors.New("audit found issues")
+)
+
+// Version check errors.
+var (
+	// ErrDigestMismatch indicates digest mismatch detected.
+	ErrDigestMismatch = errors.New("DIGEST MISMATCH (possible tag mutation or supply chain attack)")
+)

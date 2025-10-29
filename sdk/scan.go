@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -10,54 +9,66 @@ import (
 	"github.com/farcloser/quark/internal/trivy"
 )
 
-const msgVulnerabilitiesFound = "vulnerabilities found at or above threshold"
+// ScanSeverity represents vulnerability severity.
+type ScanSeverity struct {
+	value string
+}
 
 var (
-	errScanMustHaveDigest = errors.New(
-		"scan image MUST have digest specified (scanning by tag alone is not allowed)",
-	)
-	errVulnerabilitiesFoundAtAboveThreshold = errors.New(msgVulnerabilitiesFound)
-)
-
-// ScanSeverity represents vulnerability severity.
-type ScanSeverity string
-
-const (
 	// SeverityUnknown represents unknown severity.
-	SeverityUnknown ScanSeverity = "UNKNOWN"
+	SeverityUnknown = ScanSeverity{"UNKNOWN"}
 	// SeverityLow represents low severity.
-	SeverityLow ScanSeverity = "LOW"
+	SeverityLow = ScanSeverity{"LOW"}
 	// SeverityMedium represents medium severity.
-	SeverityMedium ScanSeverity = "MEDIUM"
+	SeverityMedium = ScanSeverity{"MEDIUM"}
 	// SeverityHigh represents high severity.
-	SeverityHigh ScanSeverity = "HIGH"
+	SeverityHigh = ScanSeverity{"HIGH"}
 	// SeverityCritical represents critical severity.
-	SeverityCritical ScanSeverity = "CRITICAL"
+	SeverityCritical = ScanSeverity{"CRITICAL"}
 )
+
+// String returns the string representation of the severity.
+func (s ScanSeverity) String() string {
+	return s.value
+}
 
 // ScanAction represents how to handle vulnerabilities at a severity threshold.
-type ScanAction string
+type ScanAction struct {
+	value string
+}
 
-const (
+var (
 	// ActionError causes scan to fail (default).
-	ActionError ScanAction = "error"
+	ActionError = ScanAction{"error"}
 	// ActionWarn logs vulnerabilities as warnings without failing.
-	ActionWarn ScanAction = "warn"
+	ActionWarn = ScanAction{"warn"}
 	// ActionInfo logs vulnerabilities as info without failing.
-	ActionInfo ScanAction = "info"
+	ActionInfo = ScanAction{"info"}
 )
+
+// String returns the string representation of the action.
+func (a ScanAction) String() string {
+	return a.value
+}
 
 // ScanFormat represents scan output format.
-type ScanFormat string
+type ScanFormat struct {
+	value string
+}
 
-const (
+var (
 	// FormatTable represents table output.
-	FormatTable ScanFormat = "table"
+	FormatTable = ScanFormat{"table"}
 	// FormatJSON represents JSON output.
-	FormatJSON ScanFormat = "json"
+	FormatJSON = ScanFormat{"json"}
 	// FormatSARIF represents SARIF output.
-	FormatSARIF ScanFormat = "sarif"
+	FormatSARIF = ScanFormat{"sarif"}
 )
+
+// String returns the string representation of the format.
+func (f ScanFormat) String() string {
+	return f.value
+}
 
 // ScanSeverityCheck represents a threshold check with an action.
 type ScanSeverityCheck struct {
@@ -136,7 +147,7 @@ func (builder *ScanBuilder) Build() *Scan {
 		}
 	}
 
-	if builder.scan.format == "" {
+	if builder.scan.format == (ScanFormat{}) {
 		builder.scan.format = FormatTable
 	}
 
@@ -148,7 +159,7 @@ func (builder *ScanBuilder) Build() *Scan {
 func (scan *Scan) execute(_ context.Context) error {
 	// Validate digest is present (may have been populated during plan execution)
 	if scan.image.digest == "" {
-		return fmt.Errorf("%w: %s", errScanMustHaveDigest, scan.image.name)
+		return fmt.Errorf("%w: %s", ErrScanMustHaveDigest, scan.image.name)
 	}
 
 	// Construct image reference for scanning
@@ -166,7 +177,7 @@ func (scan *Scan) execute(_ context.Context) error {
 
 	scan.log.Info().
 		Str("image", imageRef).
-		Str("format", string(scan.format)).
+		Str("format", scan.format.String()).
 		Msg("scanning image")
 
 	// Create Trivy scanner
@@ -189,7 +200,7 @@ func (scan *Scan) execute(_ context.Context) error {
 		trivy.SeverityCritical,
 	}
 
-	result, err := scanner.ScanImage(imageRef, allSeverities, string(scan.format), registryHost, username, password)
+	result, err := scanner.ScanImage(imageRef, allSeverities, scan.format.String(), registryHost, username, password)
 	if err != nil {
 		return fmt.Errorf("failed to scan image: %w", err)
 	}
@@ -213,7 +224,7 @@ func (scan *Scan) execute(_ context.Context) error {
 			},
 		}
 
-		output, err := scanner.FormatOutput(thresholdResult, string(scan.format))
+		output, err := scanner.FormatOutput(thresholdResult, scan.format.String())
 		if err != nil {
 			return fmt.Errorf("failed to format output: %w", err)
 		}
@@ -222,25 +233,25 @@ func (scan *Scan) execute(_ context.Context) error {
 		switch check.action {
 		case ActionError:
 			scan.log.Error().
-				Str("threshold", string(check.threshold)).
+				Str("threshold", check.threshold.String()).
 				Int("count", len(matchingVulns)).
-				Msg(msgVulnerabilitiesFound)
+				Msg("vulnerabilities found at or above threshold")
 			scan.log.Error().Msg(output)
 
-			return fmt.Errorf("%w: %s", errVulnerabilitiesFoundAtAboveThreshold, check.threshold)
+			return fmt.Errorf("%w: %s", ErrVulnerabilitiesFound, check.threshold)
 
 		case ActionWarn:
 			scan.log.Warn().
-				Str("threshold", string(check.threshold)).
+				Str("threshold", check.threshold.String()).
 				Int("count", len(matchingVulns)).
-				Msg(msgVulnerabilitiesFound)
+				Msg("vulnerabilities found at or above threshold")
 			scan.log.Warn().Msg(output)
 
 		case ActionInfo:
 			scan.log.Info().
-				Str("threshold", string(check.threshold)).
+				Str("threshold", check.threshold.String()).
 				Int("count", len(matchingVulns)).
-				Msg(msgVulnerabilitiesFound)
+				Msg("vulnerabilities found at or above threshold")
 			scan.log.Info().Msg(output)
 		}
 	}
@@ -260,7 +271,7 @@ func getVulnerabilitiesAtOrAbove(result *trivy.ScanResult, threshold ScanSeverit
 		"CRITICAL": 4,
 	}
 
-	thresholdLevel := severityOrder[string(threshold)]
+	thresholdLevel := severityOrder[threshold.String()]
 
 	var matching []trivy.Vulnerability
 

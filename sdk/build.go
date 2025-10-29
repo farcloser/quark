@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -11,15 +10,12 @@ import (
 	"github.com/farcloser/quark/ssh"
 )
 
-var errNoBuildNodesConfigured = errors.New("no build nodes configured")
-
 // Build represents a container image build operation.
 type Build struct {
 	name       string
 	context    string
 	dockerfile string
 	nodes      []*BuildNode
-	registry   *Registry
 	tag        string
 	log        zerolog.Logger
 }
@@ -99,7 +95,7 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 	// Use first node for multi-platform build
 	// (buildx can handle multi-platform from single builder)
 	if len(build.nodes) == 0 {
-		return errNoBuildNodesConfigured
+		return ErrNoBuildNodesConfigured
 	}
 
 	firstNode := build.nodes[0]
