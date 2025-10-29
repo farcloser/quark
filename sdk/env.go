@@ -1,33 +1,33 @@
 package sdk
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
-	"github.com/rs/zerolog/log"
 )
 
 // LoadEnv loads environment variables from the specified .env file.
 // Values in the .env file will override existing environment variables.
-// If the file doesn't exist or cannot be loaded, it logs a fatal error and exits.
+// Returns an error if the file doesn't exist or cannot be loaded.
 func LoadEnv(path string) error {
 	if err := godotenv.Overload(path); err != nil {
-		log.Fatal().Err(err).Str("path", path).Msg("Failed to load .env file")
+		return fmt.Errorf("failed to load .env file %q: %w", path, err)
 	}
 
 	return nil
 }
 
 // GetEnv retrieves an environment variable value.
-// If the variable does not exist, it logs a fatal error and exits.
+// Returns an error if the variable does not exist.
 // Empty values (FOO="") are allowed and will not cause an error.
-func GetEnv(key string) string {
+func GetEnv(key string) (string, error) {
 	value, exists := os.LookupEnv(key)
 	if !exists {
-		log.Fatal().Str("key", key).Msg("Required environment variable not set")
+		return "", fmt.Errorf("%w: %q", ErrEnvVarNotSet, key)
 	}
 
-	return value
+	return value, nil
 }
 
 // GetEnvDefault retrieves an environment variable value with a default fallback.

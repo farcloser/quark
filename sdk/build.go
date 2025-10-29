@@ -12,12 +12,15 @@ import (
 
 // Build represents a container image build operation.
 type Build struct {
-	name       string
+	opName     string
 	context    string
 	dockerfile string
 	nodes      []*BuildNode
 	tag        string
 	log        zerolog.Logger
+
+	// sshPool is set by executor before execution
+	sshPool *ssh.Pool
 }
 
 // BuildBuilder builds a Build.
@@ -55,9 +58,9 @@ func (builder *BuildBuilder) Tag(tag string) *BuildBuilder {
 }
 
 // Build validates and adds the build to the plan.
-func (builder *BuildBuilder) Build() *Build {
+func (builder *BuildBuilder) Build() (*Build, error) {
 	if builder.build.context == "" {
-		builder.build.log.Fatal().Msg("build context is required")
+		return nil, ErrBuildContextRequired
 	}
 
 	if builder.build.dockerfile == "" {
@@ -65,22 +68,23 @@ func (builder *BuildBuilder) Build() *Build {
 	}
 
 	if len(builder.build.nodes) == 0 {
-		builder.build.log.Fatal().Msg("at least one build node is required")
+		return nil, ErrBuildNodeRequired
 	}
 
 	// Registry is optional for local builds
 	// Multi-platform builds with --push require registry credentials
 
 	if builder.build.tag == "" {
-		builder.build.log.Fatal().Msg("build tag is required")
+		return nil, ErrBuildTagRequired
 	}
 
 	builder.plan.builds = append(builder.plan.builds, builder.build)
+	builder.plan.operations = append(builder.plan.operations, builder.build)
 
-	return builder.build
+	return builder.build, nil
 }
 
-func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
+func (build *Build) execute(ctx context.Context) error {
 	build.log.Info().
 		Str("context", build.context).
 		Str("tag", build.tag).
@@ -100,7 +104,7 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 
 	firstNode := build.nodes[0]
 
-	sshClient, err := sshPool.GetClient(firstNode.endpoint)
+	sshClient, err := build.sshPool.GetClient(firstNode.endpoint)
 	if err != nil {
 		return fmt.Errorf("failed to connect to build node: %w", err)
 	}
@@ -109,7 +113,7 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 	bkClient := buildkit.NewClient(sshClient, build.log)
 
 	// Upload build context
-	remotePath := "/tmp/quark-build-" + build.name
+	remotePath := "/tmp/quark-build-" + build.opName
 	if err := bkClient.UploadContext(build.context, remotePath); err != nil {
 		return fmt.Errorf("failed to upload build context: %w", err)
 	}
@@ -133,4 +137,9 @@ func (build *Build) execute(ctx context.Context, sshPool *ssh.Pool) error {
 		Msg("build complete")
 
 	return nil
+}
+
+// operationName returns the build operation name (implements operation interface).
+func (build *Build) operationName() string {
+	return build.opName
 }

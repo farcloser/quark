@@ -2,7 +2,9 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/rs/zerolog"
 
@@ -10,10 +12,13 @@ import (
 )
 
 // ScanSeverity represents vulnerability severity.
+//
+//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type ScanSeverity struct {
 	value string
 }
 
+//nolint:gochecknoglobals // ScanSeverity enum pattern requires global variables
 var (
 	// SeverityUnknown represents unknown severity.
 	SeverityUnknown = ScanSeverity{"UNKNOWN"}
@@ -32,11 +37,49 @@ func (s ScanSeverity) String() string {
 	return s.value
 }
 
+// MarshalJSON implements json.Marshaler for ScanSeverity.
+func (s ScanSeverity) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // Standard library JSON marshaling
+	return json.Marshal(s.value)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ScanSeverity.
+func (s *ScanSeverity) UnmarshalJSON(data []byte) error {
+	var str string
+	//nolint:wrapcheck // Standard library JSON unmarshaling
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	// Normalize to uppercase
+	normalized := strings.ToUpper(str)
+
+	switch normalized {
+	case "UNKNOWN":
+		s.value = "UNKNOWN"
+	case "LOW":
+		s.value = "LOW"
+	case "MEDIUM":
+		s.value = "MEDIUM"
+	case "HIGH":
+		s.value = "HIGH"
+	case "CRITICAL":
+		s.value = "CRITICAL"
+	default:
+		return fmt.Errorf("%w: %q (valid: UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL)", ErrInvalidScanSeverity, str)
+	}
+
+	return nil
+}
+
 // ScanAction represents how to handle vulnerabilities at a severity threshold.
+//
+//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type ScanAction struct {
 	value string
 }
 
+//nolint:gochecknoglobals // ScanAction enum pattern requires global variables
 var (
 	// ActionError causes scan to fail (default).
 	ActionError = ScanAction{"error"}
@@ -51,11 +94,45 @@ func (a ScanAction) String() string {
 	return a.value
 }
 
+// MarshalJSON implements json.Marshaler for ScanAction.
+func (a ScanAction) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // Standard library JSON marshaling
+	return json.Marshal(a.value)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ScanAction.
+func (a *ScanAction) UnmarshalJSON(data []byte) error {
+	var str string
+	//nolint:wrapcheck // Standard library JSON unmarshaling
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	// Normalize to lowercase
+	normalized := strings.ToLower(str)
+
+	switch normalized {
+	case "error":
+		a.value = "error"
+	case "warn":
+		a.value = "warn"
+	case "info":
+		a.value = "info"
+	default:
+		return fmt.Errorf("%w: %q (valid: error, warn, info)", ErrInvalidScanAction, str)
+	}
+
+	return nil
+}
+
 // ScanFormat represents scan output format.
+//
+//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type ScanFormat struct {
 	value string
 }
 
+//nolint:gochecknoglobals // ScanFormat enum pattern requires global variables
 var (
 	// FormatTable represents table output.
 	FormatTable = ScanFormat{"table"}
@@ -70,6 +147,41 @@ func (f ScanFormat) String() string {
 	return f.value
 }
 
+// MarshalJSON implements json.Marshaler for ScanFormat.
+func (f ScanFormat) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // Standard library JSON marshaling
+	return json.Marshal(f.value)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ScanFormat.
+func (f *ScanFormat) UnmarshalJSON(data []byte) error {
+	var str string
+	//nolint:wrapcheck // Standard library JSON unmarshaling
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	// Normalize to lowercase
+	normalized := strings.ToLower(str)
+
+	switch normalized {
+	case "table":
+		f.value = "table"
+	case "json":
+		f.value = "json"
+	case "sarif":
+		f.value = "sarif"
+	default:
+		return fmt.Errorf("%w: %q (valid: table, json, sarif)", ErrInvalidScanFormat, str)
+	}
+
+	return nil
+}
+
+const (
+	msgVulnerabilitiesFound = "vulnerabilities found at or above threshold"
+)
+
 // ScanSeverityCheck represents a threshold check with an action.
 type ScanSeverityCheck struct {
 	threshold ScanSeverity
@@ -78,7 +190,7 @@ type ScanSeverityCheck struct {
 
 // Scan represents a vulnerability scan operation.
 type Scan struct {
-	name           string
+	opName         string
 	image          *Image
 	registry       *Registry
 	severityChecks []ScanSeverityCheck
@@ -134,9 +246,9 @@ func (builder *ScanBuilder) Format(format ScanFormat) *ScanBuilder {
 }
 
 // Build validates and adds the scan to the plan.
-func (builder *ScanBuilder) Build() *Scan {
+func (builder *ScanBuilder) Build() (*Scan, error) {
 	if builder.scan.image == nil {
-		builder.scan.log.Fatal().Msg("scan image is required")
+		return nil, ErrScanImageRequired
 	}
 	// Digest validation moved to execute() - digest may be populated during plan execution
 	if len(builder.scan.severityChecks) == 0 {
@@ -152,8 +264,9 @@ func (builder *ScanBuilder) Build() *Scan {
 	}
 
 	builder.plan.scans = append(builder.plan.scans, builder.scan)
+	builder.plan.operations = append(builder.plan.operations, builder.scan)
 
-	return builder.scan
+	return builder.scan, nil
 }
 
 func (scan *Scan) execute(_ context.Context) error {
@@ -166,11 +279,19 @@ func (scan *Scan) execute(_ context.Context) error {
 	// Prefer digest for immutability, fall back to tag
 	var imageRef string
 
+	var err error
+
 	switch {
 	case scan.image.digest != "":
-		imageRef = scan.image.digestRef()
+		imageRef, err = scan.image.digestRef()
+		if err != nil {
+			return fmt.Errorf("failed to build digest reference: %w", err)
+		}
 	case scan.image.version != "":
-		imageRef = scan.image.tagRef()
+		imageRef, err = scan.image.tagRef()
+		if err != nil {
+			return fmt.Errorf("failed to build tag reference: %w", err)
+		}
 	default:
 		imageRef = scan.image.name
 	}
@@ -235,7 +356,7 @@ func (scan *Scan) execute(_ context.Context) error {
 			scan.log.Error().
 				Str("threshold", check.threshold.String()).
 				Int("count", len(matchingVulns)).
-				Msg("vulnerabilities found at or above threshold")
+				Msg(msgVulnerabilitiesFound)
 			scan.log.Error().Msg(output)
 
 			return fmt.Errorf("%w: %s", ErrVulnerabilitiesFound, check.threshold)
@@ -244,14 +365,14 @@ func (scan *Scan) execute(_ context.Context) error {
 			scan.log.Warn().
 				Str("threshold", check.threshold.String()).
 				Int("count", len(matchingVulns)).
-				Msg("vulnerabilities found at or above threshold")
+				Msg(msgVulnerabilitiesFound)
 			scan.log.Warn().Msg(output)
 
 		case ActionInfo:
 			scan.log.Info().
 				Str("threshold", check.threshold.String()).
 				Int("count", len(matchingVulns)).
-				Msg("vulnerabilities found at or above threshold")
+				Msg(msgVulnerabilitiesFound)
 			scan.log.Info().Msg(output)
 		}
 	}
@@ -263,12 +384,13 @@ func (scan *Scan) execute(_ context.Context) error {
 
 // getVulnerabilitiesAtOrAbove returns vulnerabilities at or above the given severity threshold.
 func getVulnerabilitiesAtOrAbove(result *trivy.ScanResult, threshold ScanSeverity) []trivy.Vulnerability {
+	// Build severity order map using existing constants to avoid string duplication
 	severityOrder := map[string]int{
-		"UNKNOWN":  0,
-		"LOW":      1,
-		"MEDIUM":   2,
-		"HIGH":     3,
-		"CRITICAL": 4,
+		SeverityUnknown.value:  0,
+		SeverityLow.value:      1,
+		SeverityMedium.value:   2,
+		SeverityHigh.value:     3,
+		SeverityCritical.value: 4,
 	}
 
 	thresholdLevel := severityOrder[threshold.String()]
@@ -285,4 +407,9 @@ func getVulnerabilitiesAtOrAbove(result *trivy.ScanResult, threshold ScanSeverit
 	}
 
 	return matching
+}
+
+// operationName returns the scan operation name (implements operation interface).
+func (scan *Scan) operationName() string {
+	return scan.opName
 }

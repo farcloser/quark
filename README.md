@@ -5,7 +5,7 @@ Quark is a declarative container image management tool written in Go, designed f
 ## Features
 
 - **Multi-Platform Image Sync**: Copy images between registries with digest verification (linux/amd64, linux/arm64)
-- **Registry Collection**: Store registry credentials in a plan, automatically looked up by domain
+- **Registry Authentication**: Define registry credentials in a plan, automatically looked up by domain
 - **Distributed Builds**: Build multi-platform images using SSH-accessible BuildKit nodes
 - **Vulnerability Scanning**: Scan images with Trivy for CVEs and security vulnerabilities
 - **Quality Auditing**: Audit Dockerfiles (hadolint) and images (dockle) for best practices
@@ -59,6 +59,114 @@ Or install directly with Go:
 go install github.com/farcloser/quark/cmd/quark@latest
 ```
 
+## Prerequisites
+
+Before using Quark, ensure you have the following:
+
+### Required for All Operations
+
+- **Go 1.24+** - For building and running plans
+- **Git** - For version control of your plans
+
+### Required for Specific Operations
+
+- **Docker or BuildKit** - Required for Build operations
+- **SSH Agent with Ed25519 Key** - Required for remote builds
+- **Registry Credentials** - Required for private registry access
+- **1Password CLI** (optional) - For credential management
+
+### SSH Setup (Required for Remote Builds)
+
+Quark uses SSH agent authentication for secure, keyless remote builds. Only Ed25519 keys are supported for security.
+
+**Generate an Ed25519 key:**
+```bash
+ssh-keygen -t ed25519 -C "quark-build"
+```
+
+**Add key to SSH agent:**
+```bash
+# Start ssh-agent if not running
+eval "$(ssh-agent -s)"
+
+# Add your key
+ssh-add ~/.ssh/id_ed25519
+```
+
+**Configure SSH config (optional):**
+```
+# ~/.ssh/config
+Host build-node
+    HostName build.example.com
+    User builder
+    IdentitiesOnly yes
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+#### Security Note: First Connection
+
+On first connection to a new build node, if `~/.ssh/known_hosts` doesn't exist or doesn't contain the host key, you'll receive an error with instructions to run:
+
+```bash
+ssh-keyscan -H build-node.example.com >> ~/.ssh/known_hosts
+```
+
+**IMPORTANT:** This is vulnerable to MITM (man-in-the-middle) attacks on first use. For production systems, obtain host keys through a secure channel:
+
+- **Infrastructure-as-Code:** Provision known_hosts via Terraform, Ansible, or similar
+- **Trusted Admin:** Have a system administrator provide verified host keys
+- **Out-of-Band Verification:** Manually verify the key fingerprint matches what the server reports
+
+**For development/testing:** The trust-on-first-use model is acceptable, but verify you're on a trusted network.
+
+### Getting Image Digests (Required for Sync/Scan)
+
+Image digests ensure immutability and security. Get digests from registries:
+
+**Using docker:**
+```bash
+docker pull alpine:3.20
+docker inspect alpine:3.20 --format='{{index .RepoDigests 0}}'
+# Output: alpine@sha256:abc123...
+```
+
+**Using crane:**
+```bash
+crane digest alpine:3.20
+# Output: sha256:abc123...
+```
+
+**From registry API:**
+```bash
+curl -sL https://registry.hub.docker.com/v2/library/alpine/manifests/3.20 \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  | jq -r '.config.digest'
+```
+
+### 1Password Setup (Optional)
+
+For secure credential management in CI/CD:
+
+**Install 1Password CLI:**
+```bash
+# macOS
+brew install 1password-cli
+
+# Linux
+curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
+  sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg
+```
+
+**Authenticate (local development):**
+```bash
+op signin
+```
+
+**Service account (CI/CD):**
+```bash
+export OP_SERVICE_ACCOUNT_TOKEN="ops_..."
+```
+
 ## Quick Start
 
 ### 1. Create a Plan File
@@ -81,15 +189,20 @@ func main() {
     plan := sdk.NewPlan("my-pipeline")
 
     // Create image reference
-    image := sdk.NewImage("library/alpine").
+    image, err := sdk.NewImage("library/alpine").
         Domain("docker.io").
         Version("3.20").
         Build()
+    if err != nil {
+        log.Fatal().Err(err).Msg("Failed to create image")
+    }
 
     // Check for new versions
-    plan.VersionCheck("check-alpine").
+    if _, err := plan.VersionCheck("check-alpine").
         Source(image).
-        Build()
+        Build(); err != nil {
+        log.Fatal().Err(err).Msg("Failed to create version check")
+    }
 
     // Execute plan
     if err := plan.Execute(ctx); err != nil {
@@ -176,17 +289,23 @@ Create typed image references with domain, name, version, and optional digest:
 
 ```go
 // Source image (for sync - requires digest)
-sourceImage := sdk.NewImage("timberio/vector").
+sourceImage, err := sdk.NewImage("timberio/vector").
     Domain("docker.io").
     Version("0.40.0-distroless-static").
     Digest("sha256:abc123...").
     Build()
+if err != nil {
+    log.Fatal().Err(err).Msg("Failed to create source image")
+}
 
 // Destination image (digest populated after sync)
-destImage := sdk.NewImage("my-org/vector").
+destImage, err := sdk.NewImage("my-org/vector").
     Domain("ghcr.io").
     Version("v0").
     Build()
+if err != nil {
+    log.Fatal().Err(err).Msg("Failed to create destination image")
+}
 ```
 
 **Image Properties:**
@@ -200,10 +319,12 @@ destImage := sdk.NewImage("my-org/vector").
 Copy images between registries with digest verification:
 
 ```go
-plan.Sync("sync-vector").
+if _, err := plan.Sync("sync-vector").
     Source(sourceImage).      // Must have digest
     Destination(destImage).   // Domain used for registry lookup
-    Build()
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create sync operation")
+}
 ```
 
 **Features:**
@@ -219,9 +340,11 @@ plan.Sync("sync-vector").
 Check for new image versions in upstream registries:
 
 ```go
-plan.VersionCheck("check-alpine").
+if _, err := plan.VersionCheck("check-alpine").
     Source(sourceImage).  // Checks for newer versions
-    Build()
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create version check")
+}
 ```
 
 **Features:**
@@ -236,13 +359,15 @@ plan.VersionCheck("check-alpine").
 Scan images for vulnerabilities using Trivy:
 
 ```go
-plan.Scan("scan-alpine").
+if _, err := plan.Scan("scan-alpine").
     Source(destImage).
     Severity(sdk.SeverityCritical, sdk.ActionError).
     Severity(sdk.SeverityHigh, sdk.ActionWarn).
     Severity(sdk.SeverityMedium, sdk.ActionInfo).
     Format(sdk.FormatTable).  // or FormatJSON, FormatSARIF
-    Build()
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create scan operation")
+}
 ```
 
 **Severity Levels:**
@@ -273,24 +398,29 @@ Audit Dockerfiles and images for best practices:
 
 ```go
 // Audit both Dockerfile and image
-plan.Audit("audit-complete").
+if _, err := plan.Audit("audit-complete").
     Dockerfile("./Dockerfile").       // hadolint
     Source(destImage).                // dockle
     RuleSet(sdk.RuleSetStrict).
-    IgnoreCheck("CIS-DI-0005").
-    IgnoreCheck("CIS-DI-0006").
-    Build()
+    IgnoreChecks("CIS-DI-0005", "CIS-DI-0006").
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create audit operation")
+}
 
 // Audit Dockerfile only
-plan.Audit("audit-dockerfile").
+if _, err := plan.Audit("audit-dockerfile").
     Dockerfile("./Dockerfile").
-    Build()
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create dockerfile audit")
+}
 
 // Audit image only
-plan.Audit("audit-image").
+if _, err := plan.Audit("audit-image").
     Source(destImage).
     RuleSet(sdk.RuleSetRecommended).
-    Build()
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create image audit")
+}
 ```
 
 **Rule Sets:**
@@ -317,27 +447,41 @@ Build multi-platform container images using remote BuildKit nodes:
 
 ```go
 // Define BuildKit nodes (one per platform)
-nodeAMD64 := sdk.NewBuildNode("build-amd64.example.com").
+nodeAMD64, err := plan.BuildNode("build-amd64").
+    Endpoint("build-amd64.example.com").
     Platform(sdk.PlatformAMD64).
     Build()
+if err != nil {
+    log.Fatal().Err(err).Msg("Failed to create amd64 build node")
+}
 
-nodeARM64 := sdk.NewBuildNode("build-arm64.example.com").
+nodeARM64, err := plan.BuildNode("build-arm64").
+    Endpoint("build-arm64.example.com").
     Platform(sdk.PlatformARM64).
     Build()
+if err != nil {
+    log.Fatal().Err(err).Msg("Failed to create arm64 build node")
+}
 
-// Or use SSH config alias
-nodeLocal := sdk.NewBuildNode("local-builder").  // from ~/.ssh/config
+// Or use SSH config alias as the endpoint
+nodeLocal, err := plan.BuildNode("local-builder").
+    Endpoint("local-builder").  // SSH config alias from ~/.ssh/config
     Platform(sdk.PlatformAMD64).
     Build()
+if err != nil {
+    log.Fatal().Err(err).Msg("Failed to create local build node")
+}
 
 // Build multi-platform image
-plan.Build("build-app").
+if _, err := plan.Build("build-app").
     Context("./docker").
     Dockerfile("Dockerfile").           // optional, defaults to Context/Dockerfile
-    BuildNode(nodeAMD64).
-    BuildNode(nodeARM64).
+    Node(nodeAMD64).
+    Node(nodeARM64).
     Tag("ghcr.io/org/app:v1.0").
-    Build()
+    Build(); err != nil {
+    log.Fatal().Err(err).Msg("Failed to create build operation")
+}
 ```
 
 **Platforms:**
@@ -425,7 +569,6 @@ quark execute -p plan.go
 
 The `examples/` directory contains working examples:
 
-- **`example_plan.go`** - Comprehensive example covering all operations
 - **`sync/main.go`** - Multi-platform image sync between registries
 - **`scan/main.go`** - Vulnerability scanning with Trivy
 - **`audit/main.go`** - Dockerfile and image auditing

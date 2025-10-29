@@ -5,6 +5,7 @@ type Platform struct {
 	value string
 }
 
+//nolint:gochecknoglobals // Platform enum pattern requires global variables
 var (
 	// PlatformAMD64 represents linux/amd64.
 	PlatformAMD64 = Platform{"linux/amd64"}

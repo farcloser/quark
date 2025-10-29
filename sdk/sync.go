@@ -12,7 +12,7 @@ import (
 
 // Sync represents an image sync operation from source to destination registry.
 type Sync struct {
-	name           string
+	opName         string
 	sourceRegistry *Registry
 	sourceImage    *Image
 	destRegistry   *Registry
@@ -58,20 +58,17 @@ func (builder *SyncBuilder) Platforms(platforms ...Platform) *SyncBuilder {
 }
 
 // Build validates and adds the sync to the plan.
-// Returns the destination image, which will have its digest populated during plan execution.
-func (builder *SyncBuilder) Build() *Image {
+func (builder *SyncBuilder) Build() (*Sync, error) {
 	if builder.sync.sourceImage == nil {
-		builder.sync.log.Fatal().Msg("sync source image is required")
+		return nil, ErrSyncSourceRequired
 	}
 
 	if builder.sync.sourceImage.digest == "" {
-		builder.sync.log.Fatal().
-			Str("image", builder.sync.sourceImage.name).
-			Msg("sync source image MUST have digest specified (syncing by tag alone is not allowed)")
+		return nil, fmt.Errorf("%w for image %q", ErrSyncSourceDigestRequired, builder.sync.sourceImage.name)
 	}
 
 	if builder.sync.destImage == nil {
-		builder.sync.log.Fatal().Msg("sync destination image is required")
+		return nil, ErrSyncDestinationRequired
 	}
 
 	if len(builder.sync.platforms) == 0 {
@@ -80,16 +77,23 @@ func (builder *SyncBuilder) Build() *Image {
 	}
 
 	builder.plan.syncs = append(builder.plan.syncs, builder.sync)
+	builder.plan.operations = append(builder.plan.operations, builder.sync)
 
-	return builder.sync.destImage
+	return builder.sync, nil
 }
 
 func (sync *Sync) execute(_ context.Context) error {
 	// Use digestRef for source (immutable, secure)
-	sourceRef := sync.sourceImage.digestRef()
+	sourceRef, err := sync.sourceImage.digestRef()
+	if err != nil {
+		return fmt.Errorf("failed to build source reference: %w", err)
+	}
 
 	// Use tagRef for destination (includes domain/name:version)
-	destRef := sync.destImage.tagRef()
+	destRef, err := sync.destImage.tagRef()
+	if err != nil {
+		return fmt.Errorf("failed to build destination reference: %w", err)
+	}
 
 	sync.log.Info().
 		Str("source", sourceRef).
@@ -163,4 +167,9 @@ func (sync *Sync) execute(_ context.Context) error {
 // Returns empty string if sync has not been executed yet.
 func (sync *Sync) DestDigest() string {
 	return sync.destDigest
+}
+
+// operationName returns the sync operation name (implements operation interface).
+func (sync *Sync) operationName() string {
+	return sync.opName
 }

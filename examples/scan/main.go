@@ -18,20 +18,25 @@ func main() {
 	// Define image to scan - using a public image as example
 	// Note: Scan requires a digest for security/reproducibility
 	// Get digest with: docker pull alpine:3.19 && docker inspect alpine:3.19 --format='{{index .RepoDigests 0}}'
-	exampleImage := sdk.NewImage("alpine").
+	exampleImage, err := sdk.NewImage("alpine").
 		Domain("docker.io").
 		Version("3.19").
 		Digest("sha256:6457d53fb065d6f250e1504b9bc42d5b6c65941d57532c072d929dd0628977d0").
 		Build()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create image")
+	}
 
 	// Scan image for vulnerabilities
 	// Fail on critical vulnerabilities, warn on high severity
-	plan.Scan("example-scan").
+	if _, err := plan.Scan("example-scan").
 		Source(exampleImage).
 		Severity(sdk.SeverityCritical).
 		Severity(sdk.SeverityHigh, sdk.ActionWarn).
 		Format(sdk.FormatTable).
-		Build()
+		Build(); err != nil {
+		log.Fatal().Err(err).Msg("failed to create scan")
+	}
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {

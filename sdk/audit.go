@@ -2,7 +2,9 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/rs/zerolog"
 
@@ -10,10 +12,13 @@ import (
 )
 
 // AuditRuleSet represents audit rule severity.
+//
+//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type AuditRuleSet struct {
 	value string
 }
 
+//nolint:gochecknoglobals // AuditRuleSet enum pattern requires global variables
 var (
 	// RuleSetStrict represents strict audit rules.
 	RuleSetStrict = AuditRuleSet{"strict"}
@@ -28,9 +33,40 @@ func (r AuditRuleSet) String() string {
 	return r.value
 }
 
+// MarshalJSON implements json.Marshaler for AuditRuleSet.
+func (r AuditRuleSet) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // Standard library JSON marshaling
+	return json.Marshal(r.value)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for AuditRuleSet.
+func (r *AuditRuleSet) UnmarshalJSON(data []byte) error {
+	var str string
+	//nolint:wrapcheck // Standard library JSON unmarshaling
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	// Normalize to lowercase
+	normalized := strings.ToLower(str)
+
+	switch normalized {
+	case "strict":
+		r.value = "strict"
+	case "recommended":
+		r.value = "recommended"
+	case "minimal":
+		r.value = "minimal"
+	default:
+		return fmt.Errorf("%w: %q (valid: strict, recommended, minimal)", ErrInvalidAuditRuleSet, str)
+	}
+
+	return nil
+}
+
 // Audit represents a Dockerfile and image quality audit.
 type Audit struct {
-	name         string
+	opName       string
 	dockerfile   string
 	image        *Image
 	registry     *Registry
@@ -77,9 +113,9 @@ func (builder *AuditBuilder) IgnoreChecks(checks ...string) *AuditBuilder {
 }
 
 // Build validates and adds the audit to the plan.
-func (builder *AuditBuilder) Build() *Audit {
+func (builder *AuditBuilder) Build() (*Audit, error) {
 	if builder.audit.dockerfile == "" && builder.audit.image == nil {
-		builder.audit.log.Fatal().Msg("audit requires either dockerfile or image")
+		return nil, ErrAuditSourceRequired
 	}
 
 	if builder.audit.ruleSet == (AuditRuleSet{}) {
@@ -87,14 +123,21 @@ func (builder *AuditBuilder) Build() *Audit {
 	}
 
 	builder.plan.audits = append(builder.plan.audits, builder.audit)
+	builder.plan.operations = append(builder.plan.operations, builder.audit)
 
-	return builder.audit
+	return builder.audit, nil
 }
 
 func (auditJob *Audit) execute(_ context.Context) error {
 	var imageRef string
+
 	if auditJob.image != nil {
-		imageRef = auditJob.image.tagRef()
+		ref, err := auditJob.image.tagRef()
+		if err != nil {
+			return fmt.Errorf("failed to build image reference: %w", err)
+		}
+
+		imageRef = ref
 	}
 
 	auditJob.log.Info().
@@ -154,4 +197,9 @@ func (auditJob *Audit) execute(_ context.Context) error {
 	auditJob.log.Info().Msg("audit passed")
 
 	return nil
+}
+
+// operationName returns the audit operation name (implements operation interface).
+func (auditJob *Audit) operationName() string {
+	return auditJob.opName
 }
