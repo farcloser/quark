@@ -51,13 +51,6 @@ func (builder *BuildBuilder) Node(node *BuildNode) *BuildBuilder {
 	return builder
 }
 
-// Registry sets the target registry.
-func (builder *BuildBuilder) Registry(registry *Registry) *BuildBuilder {
-	builder.build.registry = registry
-
-	return builder
-}
-
 // Tag sets the image tag.
 func (builder *BuildBuilder) Tag(tag string) *BuildBuilder {
 	builder.build.tag = tag
