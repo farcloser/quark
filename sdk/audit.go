@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -72,6 +73,7 @@ type Audit struct {
 	registry     *Registry
 	ruleSet      AuditRuleSet
 	ignoreChecks []string
+	timeout      time.Duration
 	log          zerolog.Logger
 }
 
@@ -112,6 +114,14 @@ func (builder *AuditBuilder) IgnoreChecks(checks ...string) *AuditBuilder {
 	return builder
 }
 
+// Timeout sets the operation timeout.
+// If not set, the operation will use the context timeout from Plan.Execute().
+func (builder *AuditBuilder) Timeout(duration time.Duration) *AuditBuilder {
+	builder.audit.timeout = duration
+
+	return builder
+}
+
 // Build validates and adds the audit to the plan.
 func (builder *AuditBuilder) Build() (*Audit, error) {
 	if builder.audit.dockerfile == "" && builder.audit.image == nil {
@@ -128,7 +138,14 @@ func (builder *AuditBuilder) Build() (*Audit, error) {
 	return builder.audit, nil
 }
 
-func (auditJob *Audit) execute(_ context.Context) error {
+func (auditJob *Audit) execute(ctx context.Context) error {
+	// Apply timeout if configured
+	if auditJob.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, auditJob.timeout)
+		defer cancel()
+	}
+
 	var imageRef string
 
 	if auditJob.image != nil {
@@ -151,7 +168,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 
 	// Audit Dockerfile if provided
 	if auditJob.dockerfile != "" {
-		result, err := auditor.AuditDockerfile(auditJob.dockerfile)
+		result, err := auditor.AuditDockerfile(ctx, auditJob.dockerfile)
 		if err != nil {
 			return fmt.Errorf("failed to audit Dockerfile: %w", err)
 		}
@@ -176,7 +193,7 @@ func (auditJob *Audit) execute(_ context.Context) error {
 			opts.Password = auditJob.registry.password
 		}
 
-		result, err := auditor.AuditImage(imageRef, opts)
+		result, err := auditor.AuditImage(ctx, imageRef, opts)
 		if err != nil {
 			return fmt.Errorf("failed to audit image: %w", err)
 		}

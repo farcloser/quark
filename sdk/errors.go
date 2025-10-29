@@ -150,3 +150,9 @@ var (
 	// ErrInvalidAuditRuleSet indicates an invalid audit rule set value.
 	ErrInvalidAuditRuleSet = errors.New("invalid audit rule set")
 )
+
+// Registry errors.
+var (
+	// ErrInvalidRegistryDomain indicates registry domain has invalid format.
+	ErrInvalidRegistryDomain = errors.New("invalid registry domain format")
+)

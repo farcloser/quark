@@ -121,10 +121,12 @@ func main() {
 	plan := sdk.NewPlan("1password-example")
 
 	// Configure GHCR (GitHub Container Registry) with credentials from 1Password
-	plan.Registry("ghcr.io").
+	if _, err := plan.Registry("ghcr.io").
 		Username(username).
 		Password(password).
-		Build()
+		Build(); err != nil {
+		log.Fatal().Err(err).Msg("failed to create registry")
+	}
 
 	log.Info().
 		Str("registry", "ghcr.io").

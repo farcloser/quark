@@ -17,6 +17,36 @@ Quark is a declarative container image management tool written in Go, designed f
 - **Auto-Installing Tools**: Trivy, Dockle, and hadolint automatically installed on first use
 - **SSH Connection Pooling**: Efficient, secure SSH connections to BuildKit nodes with agent-based authentication
 
+## Comparison to Alternatives
+
+**Quark vs. Other Go Container Libraries:**
+
+| Feature | Quark | google/go-containerregistry | Docker SDK | Buildkit Client |
+|---------|-------|---------------------------|------------|----------------|
+| **Primary Use Case** | Multi-operation orchestration | Low-level registry ops | Docker engine automation | Advanced builds |
+| **Builder Pattern** | ✓ Fluent DSL | ✗ Imperative API | ✗ Imperative API | ✓ Limited |
+| **Version Checking** | ✓ Built-in with digest verification | ✗ Manual implementation | ✗ Not supported | ✗ Not supported |
+| **Image Sync** | ✓ Multi-platform with digest tracking | ✓ Via crane CLI | ✗ Requires pull+push | ✗ Not primary focus |
+| **Security Scanning** | ✓ Trivy integration | ✗ External tool | ✗ External tool | ✗ External tool |
+| **Security Auditing** | ✓ Dockle integration | ✗ External tool | ✗ External tool | ✗ External tool |
+| **Multi-platform** | ✓ Native support | ✓ Native support | ✓ Via manifest lists | ✓ Native support |
+| **SSH Operations** | ✓ Connection pooling | ✗ Not supported | ✗ Not supported | ✓ SSH forwarding |
+| **Error Handling** | 28 typed sentinels | Generic errors | Docker API errors | Buildkit errors |
+| **Testing Support** | ✓ `testutil` package | ✗ No helpers | ✗ No helpers | ✗ No helpers |
+
+**When to Use Quark:**
+- Need orchestrated image operations (sync → audit → scan workflows)
+- Require version drift detection with digest verification
+- Want type-safe, fluent Go API for image lifecycle management
+- Building deployment automation tools
+
+**When to Use Alternatives:**
+- **crane/go-containerregistry:** Low-level registry operations, custom tooling
+- **Docker SDK:** Full Docker engine control (containers, networks, volumes)
+- **Buildkit:** Advanced multi-stage builds, cache optimization
+
+Quark can work alongside these tools - it focuses on image lifecycle management while they handle lower-level concerns.
+
 ## Architecture
 
 ```
@@ -547,6 +577,50 @@ Quark includes a sophisticated SSH package for secure, efficient connections to 
 // SSH connections are managed internally by BuildNodes
 // No direct SSH code needed in plans
 ```
+
+## Security Considerations
+
+### Credential Storage in Memory
+
+Quark stores registry credentials (username/password) in plaintext in process memory during plan execution. This is an industry-standard practice used by most container tooling (Docker SDK, Kubernetes client-go, etc.).
+
+**Security Measures:**
+- Credentials are **never logged** to stdout, stderr, or log files
+- Credentials are **never written to disk** (no swap, no cache files)
+- Credentials are **cleared on process exit** (memory released by OS)
+- Registry credentials are **scoped** - only sent to the specific registry domain
+
+**Risk:** Process memory dumps could expose credentials if:
+- System is compromised while Quark is running
+- Core dumps are enabled and triggered during execution
+- Debugging tools attach to the Quark process
+
+**Mitigation for Security-Conscious Environments:**
+
+1. **Use 1Password Integration** (recommended for CI/CD):
+   ```go
+   credentials, _ := sdk.GetSecret(ctx,
+       "op://Security/registry",
+       []string{"username", "password"})
+   ```
+   Credentials retrieved just-in-time, minimizing exposure window.
+
+2. **Disable Core Dumps** in production environments:
+   ```bash
+   ulimit -c 0  # Disable core dumps for current shell
+   ```
+
+3. **Run in Isolated Environments**:
+   - Container with minimal privileges
+   - Dedicated CI runner that's destroyed after use
+   - Ephemeral VMs for build operations
+
+4. **Use Short-Lived Tokens** where supported:
+   - GitHub: Personal Access Tokens with expiration
+   - Docker Hub: Access tokens (not account passwords)
+   - Cloud registries: Service account tokens with rotation
+
+**Industry Context:** All major container tools (docker, crane, skopeo, buildx) store credentials in memory during operations. This is an acceptable trade-off for usability vs. security in most environments. For environments requiring additional security, use the mitigations above.
 
 ## Environment Variables
 

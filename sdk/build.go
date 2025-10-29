@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -17,6 +18,7 @@ type Build struct {
 	dockerfile string
 	nodes      []*BuildNode
 	tag        string
+	timeout    time.Duration
 	log        zerolog.Logger
 
 	// sshPool is set by executor before execution
@@ -57,6 +59,14 @@ func (builder *BuildBuilder) Tag(tag string) *BuildBuilder {
 	return builder
 }
 
+// Timeout sets the operation timeout.
+// If not set, the operation will use the context timeout from Plan.Execute().
+func (builder *BuildBuilder) Timeout(duration time.Duration) *BuildBuilder {
+	builder.build.timeout = duration
+
+	return builder
+}
+
 // Build validates and adds the build to the plan.
 func (builder *BuildBuilder) Build() (*Build, error) {
 	if builder.build.context == "" {
@@ -85,6 +95,13 @@ func (builder *BuildBuilder) Build() (*Build, error) {
 }
 
 func (build *Build) execute(ctx context.Context) error {
+	// Apply timeout if configured
+	if build.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, build.timeout)
+		defer cancel()
+	}
+
 	build.log.Info().
 		Str("context", build.context).
 		Str("tag", build.tag).

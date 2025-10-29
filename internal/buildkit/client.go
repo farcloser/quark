@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/carapace-sh/carapace-shlex"
-	"github.com/moby/buildkit/client"
 	"github.com/rs/zerolog"
 
 	"github.com/farcloser/quark/ssh"
@@ -265,4 +264,4 @@ func (writer *logWriter) Write(bytes []byte) (int, error) {
 // The buildkit client library requires more complex setup with session management.
 // This approach is more practical and works with existing buildkit/buildx setups.
 
-var _ client.Client // Ensure buildkit client is imported for future use
+// var _ client.Client // Ensure buildkit client is imported for future use

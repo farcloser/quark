@@ -28,10 +28,12 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to get DOCKER_PASSWORD")
 	}
 
-	plan.Registry("docker.io").
+	if _, err := plan.Registry("docker.io").
 		Username(username).
 		Password(password).
-		Build()
+		Build(); err != nil {
+		log.Fatal().Err(err).Msg("failed to create registry")
+	}
 
 	// Define source image to sync
 	sourceImage, err := sdk.NewImage("alpine").

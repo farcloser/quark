@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -195,6 +196,7 @@ type Scan struct {
 	registry       *Registry
 	severityChecks []ScanSeverityCheck
 	format         ScanFormat
+	timeout        time.Duration
 	log            zerolog.Logger
 }
 
@@ -245,6 +247,14 @@ func (builder *ScanBuilder) Format(format ScanFormat) *ScanBuilder {
 	return builder
 }
 
+// Timeout sets the operation timeout.
+// If not set, the operation will use the context timeout from Plan.Execute().
+func (builder *ScanBuilder) Timeout(duration time.Duration) *ScanBuilder {
+	builder.scan.timeout = duration
+
+	return builder
+}
+
 // Build validates and adds the scan to the plan.
 func (builder *ScanBuilder) Build() (*Scan, error) {
 	if builder.scan.image == nil {
@@ -269,7 +279,14 @@ func (builder *ScanBuilder) Build() (*Scan, error) {
 	return builder.scan, nil
 }
 
-func (scan *Scan) execute(_ context.Context) error {
+func (scan *Scan) execute(ctx context.Context) error {
+	// Apply timeout if configured
+	if scan.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, scan.timeout)
+		defer cancel()
+	}
+
 	// Validate digest is present (may have been populated during plan execution)
 	if scan.image.digest == "" {
 		return fmt.Errorf("%w: %s", ErrScanMustHaveDigest, scan.image.name)
@@ -321,7 +338,15 @@ func (scan *Scan) execute(_ context.Context) error {
 		trivy.SeverityCritical,
 	}
 
-	result, err := scanner.ScanImage(imageRef, allSeverities, scan.format.String(), registryHost, username, password)
+	result, err := scanner.ScanImage(
+		ctx,
+		imageRef,
+		allSeverities,
+		scan.format.String(),
+		registryHost,
+		username,
+		password,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to scan image: %w", err)
 	}

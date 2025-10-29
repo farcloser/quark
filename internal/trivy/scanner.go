@@ -2,6 +2,7 @@
 package trivy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,6 +77,7 @@ type ScanResult struct {
 // Always scans both linux/amd64 and linux/arm64 platforms and aggregates results.
 // If registry credentials are provided, logs in to the registry before scanning.
 func (scanner *Scanner) ScanImage(
+	ctx context.Context,
 	imageRef string,
 	severities []Severity,
 	outputFormat string,
@@ -91,7 +93,7 @@ func (scanner *Scanner) ScanImage(
 
 	// Login to registry if credentials provided
 	if registryHost != "" && username != "" && password != "" {
-		if err := scanner.registryLogin(trivyPath, registryHost, username, password); err != nil {
+		if err := scanner.registryLogin(ctx, trivyPath, registryHost, username, password); err != nil {
 			return nil, fmt.Errorf("failed to login to registry: %w", err)
 		}
 	}
@@ -111,7 +113,7 @@ func (scanner *Scanner) ScanImage(
 			Str("platform", platform).
 			Msg("scanning platform")
 
-		result, err := scanner.scanPlatform(trivyPath, imageRef, platform, severities, outputFormat)
+		result, err := scanner.scanPlatform(ctx, trivyPath, imageRef, platform, severities, outputFormat)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan platform %s: %w", platform, err)
 		}
@@ -129,6 +131,7 @@ func (scanner *Scanner) ScanImage(
 
 // scanPlatform scans a specific platform.
 func (scanner *Scanner) scanPlatform(
+	ctx context.Context,
 	trivyPath string,
 	imageRef string,
 	platform string,
@@ -146,7 +149,7 @@ func (scanner *Scanner) scanPlatform(
 	}
 
 	//nolint:gosec // Command args are from trusted config
-	cmd := exec.Command(trivyPath, args...)
+	cmd := exec.CommandContext(ctx, trivyPath, args...)
 
 	// Separate stdout and stderr to avoid mixing JSON with progress messages
 	var stdout, stderr strings.Builder
@@ -290,13 +293,22 @@ func formatTable(result *ScanResult) string {
 // registryLogin logs in to a registry using trivy registry login.
 // This stores credentials in Docker's config (~/.docker/config.json) and keeps
 // them out of the process list. Credentials are only sent to the specific registry.
-func (scanner *Scanner) registryLogin(trivyPath, registryHost, username, password string) error {
+func (scanner *Scanner) registryLogin(ctx context.Context, trivyPath, registryHost, username, password string) error {
 	scanner.log.Debug().
 		Str("registry", registryHost).
 		Msg("logging in to registry")
 
 	// Use --password-stdin to avoid password in process list
-	cmd := exec.Command(trivyPath, "registry", "login", registryHost, "--username", username, "--password-stdin")
+	cmd := exec.CommandContext(
+		ctx,
+		trivyPath,
+		"registry",
+		"login",
+		registryHost,
+		"--username",
+		username,
+		"--password-stdin",
+	)
 	cmd.Stdin = strings.NewReader(password)
 
 	// Capture output for error reporting
