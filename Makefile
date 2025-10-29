@@ -83,7 +83,7 @@ lint-shell: $(call recursive_wildcard,$(MAKEFILE_DIR)/,*.sh)
 lint-commits:
 	$(call title, $@)
 	@cd $(MAKEFILE_DIR) \
-		&& git config --unset-all gpg.ssh.allowedSignersFile hack/allowed_signers \
+		&& { git config --unset-all gpg.ssh.allowedSignersFile hack/allowed_signers || true; } \
 		&& git config --add gpg.ssh.allowedSignersFile hack/allowed_signers \
 		&& git-validation $(VERBOSE_FLAG) -run DCO,short-subject,dangling-whitespace -range "$(LINT_COMMIT_RANGE)"
 	$(call footer, $@)
