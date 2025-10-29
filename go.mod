@@ -6,6 +6,7 @@ go 1.24.0
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20250218202821-56aae31c358a
 
 require (
+	github.com/carapace-sh/carapace-shlex v1.1.1
 	github.com/google/go-containerregistry v0.20.6
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.4.0

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/carapace-sh/carapace-shlex"
 	"github.com/moby/buildkit/client"
 	"github.com/rs/zerolog"
 
@@ -60,9 +61,9 @@ func (bkclient *Client) Build(
 
 	buildCmd := fmt.Sprintf(
 		"docker buildx build --platform %s --load -f %s %s",
-		platform,
-		dockerfilePath,
-		contextPath,
+		shlex.Join([]string{platform}),
+		shlex.Join([]string{dockerfilePath}),
+		shlex.Join([]string{contextPath}),
 	)
 
 	stdout, stderr, err := bkclient.sshConn.Execute(buildCmd)
@@ -86,7 +87,7 @@ func (bkclient *Client) ensureBuilder() error {
 	// Create builder if it doesn't exist (idempotent - succeeds if already exists)
 	createCmd := fmt.Sprintf(
 		"docker buildx create --name %s --driver docker-container --bootstrap --use 2>/dev/null || true",
-		builderName,
+		shlex.Join([]string{builderName}),
 	)
 
 	_, _, err := bkclient.sshConn.Execute(createCmd)
@@ -134,11 +135,11 @@ func (bkclient *Client) BuildMultiPlatform(
 
 	buildCmd := fmt.Sprintf(
 		"docker buildx build --builder %s --platform %s --push -t %s -f %s %s",
-		builderName,
-		platformsStr,
-		tag,
-		dockerfilePath,
-		contextPath,
+		shlex.Join([]string{builderName}),
+		shlex.Join([]string{platformsStr}),
+		shlex.Join([]string{tag}),
+		shlex.Join([]string{dockerfilePath}),
+		shlex.Join([]string{contextPath}),
 	)
 
 	// Stream build output to logger
@@ -169,7 +170,7 @@ func (bkclient *Client) UploadContext(localPath, remotePath string) error {
 		Msg("uploading build context")
 
 	// Create remote directory
-	mkdirCmd := "mkdir -p " + remotePath
+	mkdirCmd := "mkdir -p " + shlex.Join([]string{remotePath})
 	if _, _, err := bkclient.sshConn.Execute(mkdirCmd); err != nil {
 		return fmt.Errorf("failed to create remote directory: %w", err)
 	}
@@ -206,7 +207,7 @@ func uploadDirectory(sshConn ssh.Connection, localDir, remoteDir string) error {
 
 // GetDigest retrieves the digest of a built image.
 func (bkclient *Client) GetDigest(tag string) (string, error) {
-	inspectCmd := "docker inspect --format='{{.Id}}' " + tag
+	inspectCmd := "docker inspect --format='{{.Id}}' " + shlex.Join([]string{tag})
 
 	stdout, _, err := bkclient.sshConn.Execute(inspectCmd)
 	if err != nil {
