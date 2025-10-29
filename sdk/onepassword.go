@@ -33,9 +33,8 @@ type opItemResponse struct {
 func AuthenticateOp(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, opCLI, "signin")
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to authenticate with 1Password: %w\nOutput: %s", err, string(output))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to authenticate with 1Password: %w (check 1Password authentication)", err)
 	}
 
 	return nil
@@ -84,7 +83,7 @@ func GetSecretDocument(ctx context.Context, reference string) ([]byte, error) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get document %q: %w\nOutput: %s", reference, err, string(output))
+		return nil, fmt.Errorf("failed to get document %q: %w (check 1Password authentication)", reference, err)
 	}
 
 	if len(output) == 0 {
@@ -147,7 +146,7 @@ func GetSecret(ctx context.Context, itemRef string, fields []string) (map[string
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get item %q: %w\nOutput: %s", itemRef, err, string(output))
+		return nil, fmt.Errorf("failed to get item %q: %w (check 1Password authentication)", itemRef, err)
 	}
 
 	// Parse JSON response

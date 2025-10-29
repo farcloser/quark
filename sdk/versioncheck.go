@@ -2,15 +2,12 @@ package sdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
 
 	"github.com/farcloser/quark/internal/version"
 )
-
-var errDigestMismatch = errors.New("DIGEST MISMATCH (possible tag mutation or supply chain attack)")
 
 // VersionCheck represents a version check operation.
 type VersionCheck struct {
@@ -101,7 +98,7 @@ func (check *VersionCheck) execute(_ context.Context) error {
 
 			return fmt.Errorf(
 				"%w: current version %s points to %s, expected %s",
-				errDigestMismatch,
+				ErrDigestMismatch,
 				tagReference,
 				actualDigest,
 				img.digest,

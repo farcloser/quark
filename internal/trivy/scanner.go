@@ -293,7 +293,6 @@ func formatTable(result *ScanResult) string {
 func (scanner *Scanner) registryLogin(trivyPath, registryHost, username, password string) error {
 	scanner.log.Debug().
 		Str("registry", registryHost).
-		Str("username", username).
 		Msg("logging in to registry")
 
 	// Use --password-stdin to avoid password in process list
