@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provides automatic installation and version management for external CLI tools required by gluon (trivy, dockle).
+Provides automatic installation and version management for external CLI tools required by quark (trivy, dockle).
 
 ## Functionality
 

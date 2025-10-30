@@ -29,6 +29,7 @@ type Build struct {
 type BuildBuilder struct {
 	plan  *Plan
 	build *Build
+	built bool
 }
 
 // Context sets the build context directory.
@@ -68,7 +69,15 @@ func (builder *BuildBuilder) Timeout(duration time.Duration) *BuildBuilder {
 }
 
 // Build validates and adds the build to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *BuildBuilder) Build() (*Build, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	if builder.build.context == "" {
 		return nil, ErrBuildContextRequired
 	}
@@ -131,7 +140,7 @@ func (build *Build) execute(ctx context.Context) error {
 
 	// Upload build context
 	remotePath := "/tmp/quark-build-" + build.opName
-	if err := bkClient.UploadContext(build.context, remotePath); err != nil {
+	if err := bkClient.UploadContext(ctx, build.context, remotePath); err != nil {
 		return fmt.Errorf("failed to upload build context: %w", err)
 	}
 

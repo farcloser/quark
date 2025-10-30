@@ -12,7 +12,9 @@ import (
 
 const skipIntegrationMsg = "skipping integration test in short mode"
 
-func TestConnection_Execute(t *testing.T) { //nolint:paralleltest // Integration tests use shared container
+func TestConnection_Execute(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip(skipIntegrationMsg)
 	}
@@ -20,7 +22,9 @@ func TestConnection_Execute(t *testing.T) { //nolint:paralleltest // Integration
 	container := testutil.StartDebianSSHContainer(t)
 	client := container.Client()
 
-	t.Run("executes simple command and captures stdout", func(t *testing.T) { //nolint:paralleltest
+	t.Run("executes simple command and captures stdout", func(t *testing.T) {
+		t.Parallel()
+
 		stdout, stderr, err := client.Execute("echo 'hello world'")
 		if err != nil {
 			t.Fatalf("expected command to succeed, got error: %v", err)
@@ -35,7 +39,9 @@ func TestConnection_Execute(t *testing.T) { //nolint:paralleltest // Integration
 		}
 	})
 
-	t.Run("captures stderr", func(t *testing.T) { //nolint:paralleltest
+	t.Run("captures stderr", func(t *testing.T) {
+		t.Parallel()
+
 		stdout, stderr, err := client.Execute("echo 'error message' >&2")
 		if err != nil {
 			t.Fatalf("expected command to succeed, got error: %v", err)
@@ -50,14 +56,18 @@ func TestConnection_Execute(t *testing.T) { //nolint:paralleltest // Integration
 		}
 	})
 
-	t.Run("returns error for failing command", func(t *testing.T) { //nolint:paralleltest
+	t.Run("returns error for failing command", func(t *testing.T) {
+		t.Parallel()
+
 		_, _, err := client.Execute("exit 1")
 		if err == nil {
 			t.Fatal("expected error for command with exit code 1")
 		}
 	})
 
-	t.Run("executes multiple commands on same connection", func(t *testing.T) { //nolint:paralleltest
+	t.Run("executes multiple commands on same connection", func(t *testing.T) {
+		t.Parallel()
+
 		// First command
 		stdout1, _, err := client.Execute("echo 'first'")
 		if err != nil {
@@ -79,7 +89,9 @@ func TestConnection_Execute(t *testing.T) { //nolint:paralleltest // Integration
 		}
 	})
 
-	t.Run("handles commands with complex output", func(t *testing.T) { //nolint:paralleltest
+	t.Run("handles commands with complex output", func(t *testing.T) {
+		t.Parallel()
+
 		stdout, _, err := client.Execute("ls -la /")
 		if err != nil {
 			t.Fatalf("expected ls command to succeed, got error: %v", err)
@@ -92,7 +104,9 @@ func TestConnection_Execute(t *testing.T) { //nolint:paralleltest // Integration
 	})
 }
 
-func TestPool_GetClient(t *testing.T) { //nolint:paralleltest // Integration tests use shared container
+func TestPool_GetClient(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip(skipIntegrationMsg)
 	}
@@ -100,7 +114,9 @@ func TestPool_GetClient(t *testing.T) { //nolint:paralleltest // Integration tes
 	container := testutil.StartDebianSSHContainer(t)
 	endpoint := container.Endpoint
 
-	t.Run("creates new connection", func(t *testing.T) { //nolint:paralleltest
+	t.Run("creates new connection", func(t *testing.T) {
+		t.Parallel()
+
 		pool := ssh.NewPool(zerolog.Nop())
 
 		client, err := pool.GetClient(endpoint)
@@ -123,7 +139,9 @@ func TestPool_GetClient(t *testing.T) { //nolint:paralleltest // Integration tes
 		}
 	})
 
-	t.Run("reuses existing connection", func(t *testing.T) { //nolint:paralleltest
+	t.Run("reuses existing connection", func(t *testing.T) {
+		t.Parallel()
+
 		pool := ssh.NewPool(zerolog.Nop())
 
 		// First connection
@@ -150,7 +168,9 @@ func TestPool_GetClient(t *testing.T) { //nolint:paralleltest // Integration tes
 		}
 	})
 
-	t.Run("handles multiple parallel commands", func(t *testing.T) { //nolint:paralleltest
+	t.Run("handles multiple parallel commands", func(t *testing.T) {
+		t.Parallel()
+
 		pool := ssh.NewPool(zerolog.Nop())
 
 		client, err := pool.GetClient(endpoint)
@@ -172,7 +192,9 @@ func TestPool_GetClient(t *testing.T) { //nolint:paralleltest // Integration tes
 	})
 }
 
-func TestPool_CloseAll(t *testing.T) { //nolint:paralleltest // Integration tests use shared container
+func TestPool_CloseAll(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip(skipIntegrationMsg)
 	}
@@ -181,6 +203,8 @@ func TestPool_CloseAll(t *testing.T) { //nolint:paralleltest // Integration test
 	endpoint := container.Endpoint
 
 	t.Run("closes all connections", func(t *testing.T) {
+		t.Parallel()
+
 		pool := ssh.NewPool(zerolog.Nop())
 
 		// Create connection

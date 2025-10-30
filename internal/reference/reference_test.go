@@ -1,4 +1,5 @@
 //revive:disable:add-constant
+//revive:disable:function-length
 
 package reference_test
 
@@ -12,11 +13,9 @@ import (
 	"github.com/farcloser/quark/internal/reference"
 )
 
-//revive:disable:function-length
 func TestReference(t *testing.T) {
 	t.Parallel()
 
-	//nolint:lll
 	needles := map[string]struct {
 		Error         error
 		String        string

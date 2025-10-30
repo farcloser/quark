@@ -287,8 +287,6 @@ This eliminates passing registry objects everywhere and makes the API cleaner.
 
 ## SDK Operations
 
-> **Thread Safety**: Plan building (adding operations, registries, nodes) is not thread-safe. Build your plan in a single goroutine, then execute it. Plan execution is safe and operations run sequentially.
-
 ### Registry Collection
 
 Registries are stored in the plan and automatically looked up by domain:
@@ -657,6 +655,23 @@ Run an example:
 cd examples/sync
 quark execute -p main.go
 ```
+
+## IMPORTANT caveats
+
+### Concurrency
+
+There is no thread safety guarantees.
+Plan building (adding operations, registries, nodes) is not thread-safe.
+You should build your plan in a single goroutine, then execute it.
+Plan execution is safe and operations run sequentially.
+
+### NOT to be used with untrusted input
+
+This tool is meant to be used by developers and automated system from trusted inputs
+(eg: plans that have been authored by the team).
+
+Using it as a service, taking in user controlled input, WILL result in remote code
+execution on build-nodes, with the privileges of user associated with the ssh key being used.
 
 ## Development
 

@@ -30,10 +30,10 @@ func GetEnv(key string) (string, error) {
 	return value, nil
 }
 
-// GetEnvDefault retrieves an environment variable value with a default fallback.
+// GetEnvWithFallback retrieves an environment variable value with a default fallback.
 // If the variable does not exist, it returns the default value.
 // Empty values (FOO="") are NOT replaced with the default - only missing variables use the default.
-func GetEnvDefault(key, defaultValue string) string {
+func GetEnvWithFallback(key, defaultValue string) string {
 	value, exists := os.LookupEnv(key)
 	if !exists {
 		return defaultValue

@@ -162,7 +162,7 @@ func (bkclient *Client) BuildMultiPlatform(
 }
 
 // UploadContext uploads the build context to the remote host.
-func (bkclient *Client) UploadContext(localPath, remotePath string) error {
+func (bkclient *Client) UploadContext(ctx context.Context, localPath, remotePath string) error {
 	bkclient.log.Debug().
 		Str("local", localPath).
 		Str("remote", remotePath).
@@ -175,22 +175,27 @@ func (bkclient *Client) UploadContext(localPath, remotePath string) error {
 	}
 
 	// Walk local directory and upload files
-	return uploadDirectory(bkclient.sshConn, localPath, remotePath)
+	return uploadDirectory(ctx, bkclient.sshConn, localPath, remotePath)
 }
 
-func uploadDirectory(sshConn ssh.Connection, localDir, remoteDir string) error {
+func uploadDirectory(ctx context.Context, sshConn ssh.Connection, localDir, remoteDir string) error {
 	entries, err := os.ReadDir(localDir)
 	if err != nil {
 		return fmt.Errorf("failed to read local directory: %w", err)
 	}
 
 	for _, entry := range entries {
+		// Check context before each file/directory
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("upload cancelled: %w", err)
+		}
+
 		localPath := fmt.Sprintf("%s/%s", localDir, entry.Name())
 		remotePath := fmt.Sprintf("%s/%s", remoteDir, entry.Name())
 
 		if entry.IsDir() {
 			// Recursively upload directory
-			if err := uploadDirectory(sshConn, localPath, remotePath); err != nil {
+			if err := uploadDirectory(ctx, sshConn, localPath, remotePath); err != nil {
 				return err
 			}
 		} else {
@@ -219,6 +224,8 @@ func (bkclient *Client) GetDigest(tag string) (string, error) {
 // logWriter writes to zerolog, splitting output into lines.
 var _ io.Writer = (*logWriter)(nil)
 
+const maxLogBufferSize = 64 * 1024 // 64KB max buffer to prevent memory exhaustion
+
 type logWriter struct {
 	log    zerolog.Logger
 	buffer []byte
@@ -227,6 +234,14 @@ type logWriter struct {
 func (writer *logWriter) Write(bytes []byte) (int, error) {
 	// Append to buffer
 	writer.buffer = append(writer.buffer, bytes...)
+
+	// Force-flush if buffer exceeds max size (prevents unbounded growth)
+	if len(writer.buffer) > maxLogBufferSize {
+		writer.log.Info().Msg(string(writer.buffer))
+		writer.buffer = writer.buffer[:0]
+
+		return len(bytes), nil
+	}
 
 	// Process complete lines
 	for {

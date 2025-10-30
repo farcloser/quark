@@ -2,6 +2,7 @@
 package sync
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -31,14 +32,14 @@ func NewSyncer(srcClient, dstClient *registry.Client, log zerolog.Logger) *Synce
 // For multi-platform images, copies each platform separately and creates manifest list.
 // This matches the approach used by black/scripts/sync-images.sh.
 // Returns the destination image digest (computed locally, not from registry for security).
-func (syncer *Syncer) SyncImage(srcImage, dstImage string) (string, error) {
+func (syncer *Syncer) SyncImage(ctx context.Context, srcImage, dstImage string) (string, error) {
 	syncer.log.Debug().
 		Str("source", srcImage).
 		Str("destination", dstImage).
 		Msg("starting image sync")
 
 	// Check if source exists and get descriptor
-	desc, err := syncer.srcClient.GetImage(srcImage)
+	desc, err := syncer.srcClient.GetImage(ctx, srcImage)
 	if err != nil {
 		return "", fmt.Errorf("failed to get source image: %w", err)
 	}
@@ -47,12 +48,12 @@ func (syncer *Syncer) SyncImage(srcImage, dstImage string) (string, error) {
 	if desc.MediaType.IsIndex() {
 		syncer.log.Debug().Msg("detected multi-platform image index")
 
-		return syncer.syncMultiPlatform(srcImage, dstImage)
+		return syncer.syncMultiPlatform(ctx, srcImage, dstImage)
 	}
 
 	syncer.log.Debug().Msg("detected single-platform image")
 
-	return syncer.syncSinglePlatform(srcImage, dstImage)
+	return syncer.syncSinglePlatform(ctx, srcImage, dstImage)
 }
 
 // syncMultiPlatform syncs a multi-platform image by copying each platform separately.
@@ -61,9 +62,9 @@ func (syncer *Syncer) SyncImage(srcImage, dstImage string) (string, error) {
 // 2. Copy each platform image by digest
 // 3. Create and push manifest list at destination
 // Returns the destination manifest list digest (computed locally for security).
-func (syncer *Syncer) syncMultiPlatform(srcImage, dstImage string) (string, error) {
+func (syncer *Syncer) syncMultiPlatform(ctx context.Context, srcImage, dstImage string) (string, error) {
 	// Get platform-specific digests
-	platformDigests, err := syncer.srcClient.GetPlatformDigests(srcImage)
+	platformDigests, err := syncer.srcClient.GetPlatformDigests(ctx, srcImage)
 	if err != nil {
 		return "", fmt.Errorf("failed to get platform digests: %w", err)
 	}
@@ -79,6 +80,11 @@ func (syncer *Syncer) syncMultiPlatform(srcImage, dstImage string) (string, erro
 	platformImages := make(map[string]v1.Image)
 
 	for platform, digest := range platformDigests {
+		// Check context cancellation before each platform
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("sync cancelled: %w", err)
+		}
+
 		// Skip unsupported platforms
 		supported := false
 
@@ -107,7 +113,7 @@ func (syncer *Syncer) syncMultiPlatform(srcImage, dstImage string) (string, erro
 		// FetchPlatformImage returns the image fetched from source BY DIGEST
 		// This ensures we build the manifest list from verified content, not from destination
 		// Note: The image will be pushed by digest (not by tag) when PushManifestList is called
-		img, err := syncer.srcClient.FetchPlatformImage(stripTag(srcImage), digest)
+		img, err := syncer.srcClient.FetchPlatformImage(ctx, stripTag(srcImage), digest)
 		if err != nil {
 			return "", fmt.Errorf("failed to fetch platform %s: %w", platform, err)
 		}
@@ -122,7 +128,7 @@ func (syncer *Syncer) syncMultiPlatform(srcImage, dstImage string) (string, erro
 		Str("destination", dstImage).
 		Msg("creating manifest list")
 
-	digest, err := syncer.dstClient.PushManifestList(dstImage, platformImages)
+	digest, err := syncer.dstClient.PushManifestList(ctx, dstImage, platformImages)
 	if err != nil {
 		return "", fmt.Errorf("failed to create manifest list: %w", err)
 	}
@@ -136,11 +142,11 @@ func (syncer *Syncer) syncMultiPlatform(srcImage, dstImage string) (string, erro
 
 // syncSinglePlatform syncs a single-platform image.
 // Returns the destination image digest (computed locally for security).
-func (syncer *Syncer) syncSinglePlatform(srcImage, dstImage string) (string, error) {
+func (syncer *Syncer) syncSinglePlatform(ctx context.Context, srcImage, dstImage string) (string, error) {
 	// Copy the image and get the TRUSTED source image
 	// CopyImage returns the image fetched from source BY DIGEST
 	// SECURITY: Never fetch from destination - only use source image verified by digest
-	img, err := syncer.srcClient.CopyImage(srcImage, dstImage, syncer.dstClient)
+	img, err := syncer.srcClient.CopyImage(ctx, srcImage, dstImage, syncer.dstClient)
 	if err != nil {
 		return "", fmt.Errorf("failed to copy image: %w", err)
 	}
@@ -166,23 +172,33 @@ func stripTag(imageRef string) string {
 	}
 
 	// Check for tag format (:tag) - but not registry port (host:port)
-	// Scan backwards from end, stop at first / (which means we're in the repo part, not host part)
-	for i := len(imageRef) - 1; i >= 0; i-- {
-		if imageRef[i] == ':' {
-			return imageRef[:i]
-		}
+	// Find the last / to separate host from repo
+	lastSlash := strings.LastIndexByte(imageRef, '/')
 
-		if imageRef[i] == '/' {
-			break
+	// Search for : only after the last / (in the repo part, not the host part)
+	var colonIdx int
+	if lastSlash == -1 {
+		// No slash - entire string is repo (like "alpine:latest")
+		colonIdx = strings.IndexByte(imageRef, ':')
+	} else {
+		// Search for : only in the repo part after the last /
+		if idx := strings.IndexByte(imageRef[lastSlash+1:], ':'); idx != -1 {
+			colonIdx = lastSlash + 1 + idx
+		} else {
+			colonIdx = -1
 		}
+	}
+
+	if colonIdx != -1 {
+		return imageRef[:colonIdx]
 	}
 
 	return imageRef
 }
 
 // CheckExists checks if an image exists in the destination registry.
-func (syncer *Syncer) CheckExists(imageRef string) (bool, error) {
-	exists, err := syncer.dstClient.CheckExists(imageRef)
+func (syncer *Syncer) CheckExists(ctx context.Context, imageRef string) (bool, error) {
+	exists, err := syncer.dstClient.CheckExists(ctx, imageRef)
 	if err != nil {
 		return false, fmt.Errorf("failed to check image existence: %w", err)
 	}

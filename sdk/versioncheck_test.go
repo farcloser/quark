@@ -1,4 +1,3 @@
-//nolint:varnamelen,wsl
 package sdk_test
 
 import (
@@ -186,6 +185,4 @@ func TestVersionCheck_RegistryLookup(t *testing.T) {
 	if check == nil {
 		t.Error("Build() returned nil check")
 	}
-	// Note: Cannot verify credentials were found (unexported fields)
-	// This test documents the intention - credentials should be looked up
 }

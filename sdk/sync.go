@@ -25,8 +25,9 @@ type Sync struct {
 
 // SyncBuilder builds a Sync.
 type SyncBuilder struct {
-	plan *Plan
-	sync *Sync
+	plan  *Plan
+	sync  *Sync
+	built bool
 }
 
 // Source sets the source image.
@@ -59,7 +60,15 @@ func (builder *SyncBuilder) Platforms(platforms ...Platform) *SyncBuilder {
 }
 
 // Build validates and adds the sync to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *SyncBuilder) Build() (*Sync, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	if builder.sync.sourceImage == nil {
 		return nil, ErrSyncSourceRequired
 	}
@@ -83,7 +92,7 @@ func (builder *SyncBuilder) Build() (*Sync, error) {
 	return builder.sync, nil
 }
 
-func (sync *Sync) execute(_ context.Context) error {
+func (sync *Sync) execute(ctx context.Context) error {
 	// Use digestRef for source (immutable, secure)
 	sourceRef, err := sync.sourceImage.digestRef()
 	if err != nil {
@@ -144,7 +153,7 @@ func (sync *Sync) execute(_ context.Context) error {
 	syncer := syncsvc.NewSyncer(srcClient, dstClient, sync.log)
 
 	// Sync the image by digest and capture destination digest
-	destDigest, err := syncer.SyncImage(sourceRef, destRef)
+	destDigest, err := syncer.SyncImage(ctx, sourceRef, destRef)
 	if err != nil {
 		return fmt.Errorf("failed to sync image: %w", err)
 	}

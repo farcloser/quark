@@ -28,6 +28,7 @@ type VersionCheck struct {
 type VersionCheckBuilder struct {
 	plan  *Plan
 	check *VersionCheck
+	built bool
 }
 
 // Source sets the source image.
@@ -44,7 +45,15 @@ func (builder *VersionCheckBuilder) Source(image *Image) *VersionCheckBuilder {
 }
 
 // Build validates and adds the version check to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *VersionCheckBuilder) Build() (*VersionCheck, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	if builder.check.image == nil {
 		return nil, ErrVersionCheckImageRequired
 	}

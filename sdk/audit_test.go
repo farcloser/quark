@@ -1,4 +1,3 @@
-//nolint:varnamelen,wsl
 package sdk_test
 
 import (
@@ -209,6 +208,4 @@ func TestAuditBuilder_IgnoreChecks(t *testing.T) {
 	if audit == nil {
 		t.Fatal("Build() returned nil audit")
 	}
-	// Note: Cannot verify ignore checks directly (unexported field)
-	// This test documents the intention - checks should accumulate
 }

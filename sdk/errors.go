@@ -38,6 +38,12 @@ var (
 	ErrItemFieldNotFound = errors.New("field not found in item")
 )
 
+// Builder errors.
+var (
+	// ErrBuilderAlreadyUsed indicates a builder has been used and cannot be reused.
+	ErrBuilderAlreadyUsed = errors.New("builder has already been used; create a new builder for each operation")
+)
+
 // Build errors.
 var (
 	// ErrNoBuildNodesConfigured indicates no build nodes were added to a build operation.

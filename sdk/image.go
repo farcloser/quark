@@ -25,6 +25,7 @@ type Image struct {
 // ImageBuilder builds an Image.
 type ImageBuilder struct {
 	image *Image
+	built bool
 }
 
 // NewImage creates a new Image builder with the specified name.
@@ -63,7 +64,15 @@ func (builder *ImageBuilder) Digest(digest string) *ImageBuilder {
 }
 
 // Build validates and returns the Image.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *ImageBuilder) Build() (*Image, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	name := strings.TrimSpace(builder.image.builderName)
 	if name == "" {
 		return nil, ErrImageNameRequired
