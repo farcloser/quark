@@ -38,7 +38,7 @@ type VersionCheckBuilder struct {
 // If no registry is found, anonymous access will be used (public repos only).
 func (builder *VersionCheckBuilder) Source(image *Image) *VersionCheckBuilder {
 	builder.check.image = image
-	builder.check.registry = builder.plan.getRegistry(image.domain)
+	builder.check.registry = builder.plan.getRegistry(image.Domain())
 
 	return builder
 }
@@ -49,7 +49,7 @@ func (builder *VersionCheckBuilder) Build() (*VersionCheck, error) {
 		return nil, ErrVersionCheckImageRequired
 	}
 
-	if builder.check.image.version == "" {
+	if builder.check.image.Version() == "" {
 		return nil, ErrVersionCheckVersionRequired
 	}
 
@@ -63,8 +63,8 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	img := check.image
 
 	check.log.Info().
-		Str("image", img.name).
-		Str("version", img.version).
+		Str("image", img.Name()).
+		Str("version", img.Version()).
 		Msg("checking for version updates")
 
 	// Create version checker with optional registry credentials
@@ -83,9 +83,9 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	}
 
 	// Verify current version digest if provided
-	if img.digest != "" {
+	if img.Digest() != "" {
 		check.log.Debug().
-			Str("expected_digest", img.digest).
+			Str("expected_digest", img.Digest()).
 			Msg("verifying current version digest")
 
 		actualDigest, err := checker.GetTagDigest(tagReference)
@@ -93,11 +93,11 @@ func (check *VersionCheck) execute(_ context.Context) error {
 			return fmt.Errorf("failed to get current version digest: %w", err)
 		}
 
-		if actualDigest != img.digest {
+		if actualDigest != img.Digest() {
 			check.log.Error().
-				Str("expected", img.digest).
+				Str("expected", img.Digest()).
 				Str("actual", actualDigest).
-				Str("version", img.version).
+				Str("version", img.Version()).
 				Msg("current version digest mismatch")
 
 			return fmt.Errorf(
@@ -105,7 +105,7 @@ func (check *VersionCheck) execute(_ context.Context) error {
 				ErrDigestMismatch,
 				tagReference,
 				actualDigest,
-				img.digest,
+				img.Digest(),
 			)
 		}
 
@@ -118,7 +118,7 @@ func (check *VersionCheck) execute(_ context.Context) error {
 		if err != nil {
 			check.log.Warn().
 				Err(err).
-				Str("version", img.version).
+				Str("version", img.Version()).
 				Msg("failed to retrieve current version digest for verification")
 		} else {
 			check.log.Warn().
@@ -129,7 +129,7 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	}
 
 	// Check for updates - variant auto-extracted from version
-	info, err := checker.CheckVersion(img.name, img.version, "")
+	info, err := checker.CheckVersion(img.Name(), img.Version(), "")
 	if err != nil {
 		return fmt.Errorf("failed to check version: %w", err)
 	}
@@ -143,7 +143,7 @@ func (check *VersionCheck) execute(_ context.Context) error {
 
 	if info.UpdateAvailable {
 		check.log.Warn().
-			Str("image", img.name).
+			Str("image", img.Name()).
 			Str("current", info.CurrentVersion).
 			Str("latest", info.LatestVersion).
 			Str("digest", info.LatestDigest).

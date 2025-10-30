@@ -1,6 +1,8 @@
 package sdk
 
 import (
+	"strings"
+
 	"github.com/rs/zerolog"
 )
 
@@ -34,6 +36,7 @@ func (builder *BuildNodeBuilder) Platform(platform Platform) *BuildNodeBuilder {
 
 // Build validates and adds the build node to the plan.
 func (builder *BuildNodeBuilder) Build() (*BuildNode, error) {
+	builder.node.endpoint = strings.TrimSpace(builder.node.endpoint)
 	if builder.node.endpoint == "" {
 		return nil, ErrBuildNodeEndpointRequired
 	}
