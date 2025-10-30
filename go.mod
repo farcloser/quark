@@ -12,7 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.4.0
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/pkg/sftp v1.13.9
+	github.com/pkg/sftp v1.13.10
 	github.com/rs/zerolog v1.34.0
 	github.com/urfave/cli/v3 v3.5.0
 	golang.org/x/crypto v0.43.0
