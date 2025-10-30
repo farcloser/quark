@@ -287,6 +287,8 @@ This eliminates passing registry objects everywhere and makes the API cleaner.
 
 ## SDK Operations
 
+> **Thread Safety**: Plan building (adding operations, registries, nodes) is not thread-safe. Build your plan in a single goroutine, then execute it. Plan execution is safe and operations run sequentially.
+
 ### Registry Collection
 
 Registries are stored in the plan and automatically looked up by domain:

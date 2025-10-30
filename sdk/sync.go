@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/opencontainers/go-digest"
 	"github.com/rs/zerolog"
 
 	"github.com/farcloser/quark/internal/registry"
@@ -34,7 +35,7 @@ type SyncBuilder struct {
 // If no registry is found for the domain, unauthenticated access will be used.
 func (builder *SyncBuilder) Source(image *Image) *SyncBuilder {
 	builder.sync.sourceImage = image
-	builder.sync.sourceRegistry = builder.plan.getRegistry(image.domain)
+	builder.sync.sourceRegistry = builder.plan.getRegistry(image.Domain())
 
 	return builder
 }
@@ -45,7 +46,7 @@ func (builder *SyncBuilder) Source(image *Image) *SyncBuilder {
 // If no registry is found for the domain, unauthenticated access will be used.
 func (builder *SyncBuilder) Destination(image *Image) *SyncBuilder {
 	builder.sync.destImage = image
-	builder.sync.destRegistry = builder.plan.getRegistry(image.domain)
+	builder.sync.destRegistry = builder.plan.getRegistry(image.Domain())
 
 	return builder
 }
@@ -63,8 +64,8 @@ func (builder *SyncBuilder) Build() (*Sync, error) {
 		return nil, ErrSyncSourceRequired
 	}
 
-	if builder.sync.sourceImage.digest == "" {
-		return nil, fmt.Errorf("%w for image %q", ErrSyncSourceDigestRequired, builder.sync.sourceImage.name)
+	if builder.sync.sourceImage.Digest() == "" {
+		return nil, fmt.Errorf("%w for image %q", ErrSyncSourceDigestRequired, builder.sync.sourceImage.Name())
 	}
 
 	if builder.sync.destImage == nil {
@@ -152,7 +153,13 @@ func (sync *Sync) execute(_ context.Context) error {
 	sync.destDigest = destDigest
 
 	// Auto-populate destination image digest for subsequent operations (e.g., scanning)
-	sync.destImage.digest = destDigest
+	// Update the internal reference digest
+	parsedDigest, err := digest.Parse(destDigest)
+	if err != nil {
+		return fmt.Errorf("failed to parse computed digest: %w", err)
+	}
+
+	sync.destImage.ref.Digest = parsedDigest
 
 	sync.log.Info().
 		Str("dest_digest", destDigest).

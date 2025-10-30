@@ -95,7 +95,7 @@ func (builder *AuditBuilder) Dockerfile(dockerfile string) *AuditBuilder {
 // If no registry is found, anonymous access will be used.
 func (builder *AuditBuilder) Source(image *Image) *AuditBuilder {
 	builder.audit.image = image
-	builder.audit.registry = builder.plan.getRegistry(image.domain)
+	builder.audit.registry = builder.plan.getRegistry(image.Domain())
 
 	return builder
 }

@@ -212,7 +212,7 @@ type ScanBuilder struct {
 // If no registry is found, anonymous access will be used.
 func (builder *ScanBuilder) Source(image *Image) *ScanBuilder {
 	builder.scan.image = image
-	builder.scan.registry = builder.plan.getRegistry(image.domain)
+	builder.scan.registry = builder.plan.getRegistry(image.Domain())
 
 	return builder
 }
@@ -288,8 +288,8 @@ func (scan *Scan) execute(ctx context.Context) error {
 	}
 
 	// Validate digest is present (may have been populated during plan execution)
-	if scan.image.digest == "" {
-		return fmt.Errorf("%w: %s", ErrScanMustHaveDigest, scan.image.name)
+	if scan.image.Digest() == "" {
+		return fmt.Errorf("%w: %s", ErrScanMustHaveDigest, scan.image.Name())
 	}
 
 	// Construct image reference for scanning
@@ -299,18 +299,18 @@ func (scan *Scan) execute(ctx context.Context) error {
 	var err error
 
 	switch {
-	case scan.image.digest != "":
+	case scan.image.Digest() != "":
 		imageRef, err = scan.image.digestRef()
 		if err != nil {
 			return fmt.Errorf("failed to build digest reference: %w", err)
 		}
-	case scan.image.version != "":
+	case scan.image.Version() != "":
 		imageRef, err = scan.image.tagRef()
 		if err != nil {
 			return fmt.Errorf("failed to build tag reference: %w", err)
 		}
 	default:
-		imageRef = scan.image.name
+		imageRef = scan.image.Name()
 	}
 
 	scan.log.Info().

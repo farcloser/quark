@@ -81,6 +81,9 @@ var (
 
 	// ErrImageDigestRequired indicates image digest is required for digest reference.
 	ErrImageDigestRequired = errors.New("cannot create digest reference without digest")
+
+	// ErrInvalidImageDigest indicates image digest has invalid format.
+	ErrInvalidImageDigest = errors.New("invalid image digest format")
 )
 
 // Environment errors.
@@ -149,10 +152,4 @@ var (
 var (
 	// ErrInvalidAuditRuleSet indicates an invalid audit rule set value.
 	ErrInvalidAuditRuleSet = errors.New("invalid audit rule set")
-)
-
-// Registry errors.
-var (
-	// ErrInvalidRegistryDomain indicates registry domain has invalid format.
-	ErrInvalidRegistryDomain = errors.New("invalid registry domain format")
 )

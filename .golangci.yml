@@ -112,6 +112,9 @@ linters:
             - github.com/joho/godotenv
             - github.com/kevinburke/ssh_config
             - github.com/pkg/sft
+            - github.com/distribution/reference
+            - github.com/opencontainers/go-digest
+            - gotest.tools/v3/assert
 
     staticcheck:
       checks:
