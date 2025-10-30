@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -85,7 +86,8 @@ func (auditor *Auditor) AuditDockerfile(ctx context.Context, dockerfilePath stri
 	var issues []map[string]any
 	if len(output) > 0 {
 		if parseErr := json.Unmarshal(output, &issues); parseErr != nil {
-			auditor.log.Debug().Err(parseErr).Msg("failed to parse hadolint output")
+			auditor.log.Error().Err(parseErr).Str("output", string(output)).Msg("failed to parse hadolint output")
+			return nil, fmt.Errorf("failed to parse hadolint JSON output: %w", parseErr)
 		}
 	}
 
@@ -120,6 +122,9 @@ func (auditor *Auditor) AuditImage(ctx context.Context, imageRef string, opts Im
 
 	//nolint:gosec // Image ref is from user config
 	cmd := exec.CommandContext(ctx, docklePath, args...)
+
+	// Initialize environment with parent variables
+	cmd.Env = os.Environ()
 
 	// Set credentials via environment variables to avoid exposing in process list
 	// DOCKLE_AUTH_URL scopes credentials to the specific registry

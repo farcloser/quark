@@ -81,6 +81,7 @@ type Audit struct {
 type AuditBuilder struct {
 	plan  *Plan
 	audit *Audit
+	built bool
 }
 
 // Dockerfile sets the Dockerfile path to audit.
@@ -123,7 +124,15 @@ func (builder *AuditBuilder) Timeout(duration time.Duration) *AuditBuilder {
 }
 
 // Build validates and adds the audit to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *AuditBuilder) Build() (*Audit, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	if builder.audit.dockerfile == "" && builder.audit.image == nil {
 		return nil, ErrAuditSourceRequired
 	}

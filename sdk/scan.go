@@ -202,8 +202,9 @@ type Scan struct {
 
 // ScanBuilder builds a Scan.
 type ScanBuilder struct {
-	plan *Plan
-	scan *Scan
+	plan  *Plan
+	scan  *Scan
+	built bool
 }
 
 // Source sets the image to scan.
@@ -256,7 +257,15 @@ func (builder *ScanBuilder) Timeout(duration time.Duration) *ScanBuilder {
 }
 
 // Build validates and adds the scan to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *ScanBuilder) Build() (*Scan, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	if builder.scan.image == nil {
 		return nil, ErrScanImageRequired
 	}

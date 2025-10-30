@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kevinburke/ssh_config"
 	"github.com/pkg/sftp"
@@ -111,6 +112,8 @@ func (c *client) connect() error {
 		HostKeyAlgorithms: []string{
 			ssh.KeyAlgoED25519,
 		},
+		// Timeout prevents indefinite hangs on unreachable/slow hosts
+		Timeout: 30 * time.Second,
 	}
 
 	// Connect to remote host
@@ -298,6 +301,13 @@ func (c *client) close() error {
 		c.sftpClient = nil
 	}
 
+	// Close SSH agent connection to prevent file descriptor leak
+	// Must be done before checking sshClient, as agentConn may be set even if sshClient is nil
+	if c.agentConn != nil {
+		_ = c.agentConn.Close()
+		c.agentConn = nil
+	}
+
 	// Then close SSH connection
 	if c.sshClient == nil {
 		return nil
@@ -305,12 +315,6 @@ func (c *client) close() error {
 
 	err := c.sshClient.Close()
 	c.sshClient = nil
-
-	// Close SSH agent connection to prevent file descriptor leak
-	if c.agentConn != nil {
-		_ = c.agentConn.Close()
-		c.agentConn = nil
-	}
 
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrConnectionClose, err)
