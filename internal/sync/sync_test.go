@@ -1,7 +1,6 @@
 package sync_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -99,7 +98,7 @@ func TestSyncer_SyncImage_EmptyReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			digest, err := syncer.SyncImage(context.Background(), tt.srcImage, tt.dstImage)
+			digest, err := syncer.SyncImage(t.Context(), tt.srcImage, tt.dstImage)
 
 			// Empty references should fail (either at parse or registry access)
 			if err == nil {
@@ -121,7 +120,7 @@ func TestSyncer_CheckExists_EmptyReference(t *testing.T) {
 	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
 	syncer := sync.NewSyncer(srcClient, dstClient, zerolog.Nop())
 
-	exists, err := syncer.CheckExists(context.Background(), "")
+	exists, err := syncer.CheckExists(t.Context(), "")
 
 	// Empty reference should fail
 	if err == nil {
@@ -163,7 +162,7 @@ func TestSyncer_CheckExists_InvalidReference(t *testing.T) {
 			dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
 			syncer := sync.NewSyncer(srcClient, dstClient, zerolog.Nop())
 
-			exists, err := syncer.CheckExists(context.Background(), tt.imageRef)
+			exists, err := syncer.CheckExists(t.Context(), tt.imageRef)
 
 			if err == nil {
 				t.Error("CheckExists() error = nil, want error for invalid reference")

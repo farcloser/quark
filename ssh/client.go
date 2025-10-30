@@ -18,6 +18,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/farcloser/quark/filesystem"
 )
 
 var (
@@ -32,8 +34,6 @@ var (
 
 const (
 	defaultSSHPort = 22
-	dirPermission  = 0o700
-	filePermission = 0o600
 )
 
 // Connection represents an active SSH connection.
@@ -113,7 +113,7 @@ func (c *client) connect() error {
 			ssh.KeyAlgoED25519,
 		},
 		// Timeout prevents indefinite hangs on unreachable/slow hosts
-		Timeout: 30 * time.Second,
+		Timeout: 30 * time.Second, //revive:disable:add-constant
 	}
 
 	// Connect to remote host
@@ -533,13 +533,13 @@ func (c *client) knownHostsCallback() (ssh.HostKeyCallback, error) {
 
 		// If known_hosts doesn't exist, create it with proper permissions
 		sshDir := filepath.Join(home, ".ssh")
-		if err := os.MkdirAll(sshDir, dirPermission); err != nil {
+		if err := os.MkdirAll(sshDir, filesystem.DirPermissionsPrivate); err != nil {
 			return nil, fmt.Errorf("failed to create .ssh directory: %w", err)
 		}
 
 		// Create empty known_hosts file
 		//nolint:gosec
-		file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_WRONLY, filePermission)
+		file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_WRONLY, filesystem.FilePermissionsPrivate)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create known_hosts: %w", err)
 		}
@@ -629,7 +629,7 @@ func (c *client) UploadFile(localPath, remotePath string) error {
 	}
 
 	// Set file permissions to 0600 (owner read/write only)
-	if err := c.sftpClient.Chmod(remotePath, filePermission); err != nil {
+	if err := c.sftpClient.Chmod(remotePath, filesystem.FilePermissionsPrivate); err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 
@@ -662,7 +662,7 @@ func (c *client) UploadData(data []byte, remotePath string) error {
 	}
 
 	// Set file permissions to 0600 (owner read/write only)
-	if err := c.sftpClient.Chmod(remotePath, filePermission); err != nil {
+	if err := c.sftpClient.Chmod(remotePath, filesystem.FilePermissionsPrivate); err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 

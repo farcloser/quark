@@ -13,8 +13,6 @@ import (
 )
 
 // AuditRuleSet represents audit rule severity.
-//
-//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type AuditRuleSet struct {
 	value string
 }
@@ -30,12 +28,12 @@ var (
 )
 
 // String returns the string representation of the rule set.
-func (r AuditRuleSet) String() string {
+func (r *AuditRuleSet) String() string {
 	return r.value
 }
 
 // MarshalJSON implements json.Marshaler for AuditRuleSet.
-func (r AuditRuleSet) MarshalJSON() ([]byte, error) {
+func (r *AuditRuleSet) MarshalJSON() ([]byte, error) {
 	//nolint:wrapcheck // Standard library JSON marshaling
 	return json.Marshal(r.value)
 }

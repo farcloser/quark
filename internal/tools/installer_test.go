@@ -1,7 +1,6 @@
 package tools_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -60,8 +59,6 @@ func TestToolStructure(t *testing.T) {
 
 // INTENTION: GetToolPath should return expected path structure.
 func TestInstaller_GetToolPath(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name   string
 		tool   tools.Tool
@@ -90,40 +87,15 @@ func TestInstaller_GetToolPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Note: We can't fully isolate environment in parallel tests,
-			// but we can verify the path format is correct
-			installer := tools.NewInstaller(zerolog.Nop())
-
-			// Set environment variables temporarily
-			originalGOBIN := os.Getenv("GOBIN")
-			originalGOPATH := os.Getenv("GOPATH")
-
 			if tt.gobin != "" {
-				os.Setenv("GOBIN", tt.gobin)
-			} else {
-				os.Unsetenv("GOBIN")
+				t.Setenv("GOBIN", tt.gobin)
 			}
 
 			if tt.gopath != "" {
-				os.Setenv("GOPATH", tt.gopath)
-			} else if tt.gobin == "" {
-				// Only unset if not using GOBIN
-				os.Unsetenv("GOPATH")
+				t.Setenv("GOPATH", tt.gopath)
 			}
 
-			// Restore environment after test
-			defer func() {
-				if originalGOBIN != "" {
-					os.Setenv("GOBIN", originalGOBIN)
-				} else {
-					os.Unsetenv("GOBIN")
-				}
-
-				if originalGOPATH != "" {
-					os.Setenv("GOPATH", originalGOPATH)
-				}
-			}()
-
+			installer := tools.NewInstaller(zerolog.Nop())
 			path := installer.GetToolPath(tt.tool)
 
 			// Verify path ends with tool name
@@ -150,8 +122,11 @@ func TestInstaller_GetToolPath(t *testing.T) {
 
 // INTENTION: Ensure should not panic when tool is not found.
 // Note: This test may actually install the tool if 'go install' succeeds.
+//
+
 func TestInstaller_Ensure_ToolNotInPath(t *testing.T) {
-	// Don't run in parallel - modifies global tool installation state
+	t.Parallel()
+
 	// Skip this test as it would actually install trivy
 	t.Skip("Skipping - would install real tools")
 }

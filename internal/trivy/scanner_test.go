@@ -286,6 +286,7 @@ func TestScanner_FormatOutput_TableFormat(t *testing.T) {
 	}
 
 	scanner := trivy.NewScanner(zerolog.Nop())
+
 	output, err := scanner.FormatOutput(result, "table")
 	if err != nil {
 		t.Fatalf("FormatOutput() error = %v, want nil", err)
@@ -331,6 +332,7 @@ func TestScanner_FormatOutput_JSONFormat(t *testing.T) {
 	}
 
 	scanner := trivy.NewScanner(zerolog.Nop())
+
 	output, err := scanner.FormatOutput(result, "json")
 	if err != nil {
 		t.Fatalf("FormatOutput() error = %v, want nil", err)

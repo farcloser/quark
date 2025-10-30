@@ -1,4 +1,3 @@
-//nolint:revive,varnamelen
 package sdk_test
 
 import (

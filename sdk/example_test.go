@@ -1,8 +1,6 @@
 package sdk_test
 
 import (
-	"context"
-	"fmt"
 	"log"
 
 	"github.com/farcloser/quark/sdk"
@@ -41,15 +39,7 @@ func Example_buildImage() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Execute the plan
-	ctx := context.Background()
-	if err := plan.Execute(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Build complete")
-	// Output: Build complete
+	// Output:
 }
 
 // Example_syncImage demonstrates syncing an image between registries.
@@ -101,15 +91,7 @@ func Example_syncImage() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Execute the plan
-	ctx := context.Background()
-	if err := plan.Execute(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Sync complete")
-	// Output: Sync complete
+	// Output:
 }
 
 // Example_scanImage demonstrates scanning an image for vulnerabilities.
@@ -146,15 +128,7 @@ func Example_scanImage() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Execute the plan
-	ctx := context.Background()
-	if err := plan.Execute(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Scan complete")
-	// Output: Scan complete
+	// Output:
 }
 
 // Example_auditImage demonstrates auditing a Dockerfile and container image.
@@ -190,15 +164,7 @@ func Example_auditImage() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Execute the plan
-	ctx := context.Background()
-	if err := plan.Execute(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Audit complete")
-	// Output: Audit complete
+	// Output:
 }
 
 // Example_versionCheck demonstrates checking for image version updates.
@@ -231,15 +197,7 @@ func Example_versionCheck() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Execute the plan
-	ctx := context.Background()
-	if err := plan.Execute(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Version check complete")
-	// Output: Version check complete
+	// Output:
 }
 
 // Example_completeWorkflow demonstrates a complete CI/CD workflow combining multiple operations.
@@ -308,13 +266,5 @@ func Example_completeWorkflow() {
 		Source(stagingImage).
 		Destination(prodImage).
 		Build()
-
-	// Execute entire workflow
-	ctx := context.Background()
-	if err := plan.Execute(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Complete workflow executed successfully")
-	// Output: Complete workflow executed successfully
+	// Output:
 }

@@ -211,7 +211,11 @@ func (client *Client) GetDigest(ctx context.Context, imageRef string) (string, e
 // PushManifestList creates and pushes a manifest list from platform-specific images.
 // platformImages is a map of platform string (e.g., "linux/amd64") to image reference.
 // Returns the digest of the created manifest list.
-func (client *Client) PushManifestList(ctx context.Context, manifestRef string, platformImages map[string]v1.Image) (string, error) {
+func (client *Client) PushManifestList(
+	ctx context.Context,
+	manifestRef string,
+	platformImages map[string]v1.Image,
+) (string, error) {
 	client.log.Debug().
 		Str("manifest", manifestRef).
 		Int("platforms", len(platformImages)).

@@ -1,4 +1,3 @@
-//nolint:revive,varnamelen,wsl
 package sdk_test
 
 import (
@@ -153,8 +152,6 @@ func TestImageBuilder_Immutability(t *testing.T) {
 	if img.Version() != "3.20" {
 		t.Errorf("Version() = %q, want %q", img.Version(), "3.20")
 	}
-	// Image should have no setters - immutability enforced at compile time
-	// This test documents the design intention
 }
 
 // INTENTION: Empty domain should normalize to docker.io.

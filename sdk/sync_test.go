@@ -1,4 +1,3 @@
-//nolint:revive,varnamelen,wsl
 package sdk_test
 
 import (
@@ -156,8 +155,6 @@ func TestSyncBuilder_DefaultPlatforms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v, want nil", err)
 	}
-	// Note: Cannot inspect platforms directly (unexported field)
-	// This test documents the intention - platforms default to AMD64+ARM64
 }
 
 // INTENTION: Credentials should be looked up from plan's registry collection by domain.
@@ -202,9 +199,9 @@ func TestSyncBuilder_RegistryLookup(t *testing.T) {
 		t.Errorf("Build() error = %v, want nil", err)
 	}
 
+	// Note: Cannot verify credentials were found (unexported fields)
+	// This test documents the intention - credentials should be looked up
 	if sync == nil {
 		t.Error("Build() returned nil sync")
 	}
-	// Note: Cannot verify credentials were found (unexported fields)
-	// This test documents the intention - credentials should be looked up
 }

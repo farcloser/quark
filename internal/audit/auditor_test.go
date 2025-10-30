@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/farcloser/quark/filesystem"
 	"github.com/farcloser/quark/internal/audit"
 )
 
@@ -67,7 +68,7 @@ RUN apt-get update
 COPY . /app
 `
 
-	if err := os.WriteFile(dockerfilePath, []byte(flawedDockerfile), 0o600); err != nil {
+	if err := os.WriteFile(dockerfilePath, []byte(flawedDockerfile), filesystem.FilePermissionsPrivate); err != nil {
 		t.Fatalf("Failed to create test Dockerfile: %v", err)
 	}
 

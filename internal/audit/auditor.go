@@ -87,6 +87,7 @@ func (auditor *Auditor) AuditDockerfile(ctx context.Context, dockerfilePath stri
 	if len(output) > 0 {
 		if parseErr := json.Unmarshal(output, &issues); parseErr != nil {
 			auditor.log.Error().Err(parseErr).Str("output", string(output)).Msg("failed to parse hadolint output")
+
 			return nil, fmt.Errorf("failed to parse hadolint JSON output: %w", parseErr)
 		}
 	}

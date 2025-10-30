@@ -13,8 +13,6 @@ import (
 )
 
 // ScanSeverity represents vulnerability severity.
-//
-//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type ScanSeverity struct {
 	value string
 }
@@ -34,12 +32,12 @@ var (
 )
 
 // String returns the string representation of the severity.
-func (s ScanSeverity) String() string {
+func (s *ScanSeverity) String() string {
 	return s.value
 }
 
 // MarshalJSON implements json.Marshaler for ScanSeverity.
-func (s ScanSeverity) MarshalJSON() ([]byte, error) {
+func (s *ScanSeverity) MarshalJSON() ([]byte, error) {
 	//nolint:wrapcheck // Standard library JSON marshaling
 	return json.Marshal(s.value)
 }
@@ -74,8 +72,6 @@ func (s *ScanSeverity) UnmarshalJSON(data []byte) error {
 }
 
 // ScanAction represents how to handle vulnerabilities at a severity threshold.
-//
-//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type ScanAction struct {
 	value string
 }
@@ -91,12 +87,12 @@ var (
 )
 
 // String returns the string representation of the action.
-func (a ScanAction) String() string {
+func (a *ScanAction) String() string {
 	return a.value
 }
 
 // MarshalJSON implements json.Marshaler for ScanAction.
-func (a ScanAction) MarshalJSON() ([]byte, error) {
+func (a *ScanAction) MarshalJSON() ([]byte, error) {
 	//nolint:wrapcheck // Standard library JSON marshaling
 	return json.Marshal(a.value)
 }
@@ -127,8 +123,6 @@ func (a *ScanAction) UnmarshalJSON(data []byte) error {
 }
 
 // ScanFormat represents scan output format.
-//
-//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type ScanFormat struct {
 	value string
 }
@@ -144,12 +138,12 @@ var (
 )
 
 // String returns the string representation of the format.
-func (f ScanFormat) String() string {
+func (f *ScanFormat) String() string {
 	return f.value
 }
 
 // MarshalJSON implements json.Marshaler for ScanFormat.
-func (f ScanFormat) MarshalJSON() ([]byte, error) {
+func (f *ScanFormat) MarshalJSON() ([]byte, error) {
 	//nolint:wrapcheck // Standard library JSON marshaling
 	return json.Marshal(f.value)
 }

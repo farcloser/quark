@@ -1,4 +1,3 @@
-//nolint:varnamelen
 package sdk_test
 
 import (
