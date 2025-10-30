@@ -60,11 +60,12 @@ func TestAuditor_AuditDockerfile_DetectsIssues(t *testing.T) {
 	tmpDir := t.TempDir()
 	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
 
-	// This Dockerfile has issues that hadolint will catch:
-	// - Missing FROM
-	// - Using latest tag
-	flawedDockerfile := `# Missing FROM statement
-RUN apt-get update
+	// This Dockerfile has issues that all hadolint versions will catch:
+	// - DL3006: Using latest tag (always tag the version explicitly)
+	// - DL3008: Pin versions in apt-get install
+	// - DL3009: Delete apt-get lists after installing
+	flawedDockerfile := `FROM debian:latest
+RUN apt-get update && apt-get install -y curl
 COPY . /app
 `
 
@@ -86,7 +87,7 @@ COPY . /app
 		t.Fatal("AuditDockerfile() result = nil, want non-nil result")
 	}
 
-	// The flawed Dockerfile should have issues
+	// The flawed Dockerfile should have issues (DL3006, DL3008, DL3009 are old rules)
 	if result.DockerfileIssues == 0 {
 		t.Error("AuditDockerfile() found no issues in flawed Dockerfile, expected issues")
 	}
