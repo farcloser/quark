@@ -140,7 +140,20 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	// Check for updates - variant auto-extracted from version
 	info, err := checker.CheckVersion(img.Name(), img.Version(), "")
 	if err != nil {
-		return fmt.Errorf("failed to check version: %w", err)
+		check.log.Error().
+			Err(err).
+			Str("image", img.Name()).
+			Str("version", img.Version()).
+			Msg("failed to check version (skipping update check)")
+
+		// Mark as executed with no update available - don't fail the entire plan
+		check.currentVersion = img.Version()
+		check.latestVersion = img.Version()
+		check.latestDigest = img.Digest()
+		check.updateAvailable = false
+		check.executed = true
+
+		return nil
 	}
 
 	// Store results for later retrieval
