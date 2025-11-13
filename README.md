@@ -8,7 +8,7 @@ Quark is a declarative container image management tool written in Go, designed f
 - **Registry Authentication**: Define registry credentials in a plan, automatically looked up by domain
 - **Distributed Builds**: Build multi-platform images using SSH-accessible BuildKit nodes
 - **Vulnerability Scanning**: Scan images with Trivy for CVEs and security vulnerabilities
-- **Quality Auditing**: Audit Dockerfiles (godolint SDK) and images (dockle) for best practices
+- **Quality Auditing**: Audit Dockerfiles (godolint) and images (dockle) for best practices
 - **Version Checking**: Monitor upstream image registries for new releases with digest verification
 - **Type-Safe Plans**: Define operations as Go programs with compile-time validation
 - **Infrastructure Agnostic**: No hard-coded dependencies on specific registries or infrastructure
@@ -16,36 +16,6 @@ Quark is a declarative container image management tool written in Go, designed f
 - **1Password Integration**: Retrieve credentials securely from 1Password vaults
 - **Auto-Installing Tools**: Trivy and Dockle automatically installed on first use
 - **SSH Connection Pooling**: Efficient, secure SSH connections to BuildKit nodes with agent-based authentication
-
-## Comparison to Alternatives
-
-**Quark vs. Other Go Container Libraries:**
-
-| Feature | Quark | google/go-containerregistry | Docker SDK | Buildkit Client |
-|---------|-------|---------------------------|------------|----------------|
-| **Primary Use Case** | Multi-operation orchestration | Low-level registry ops | Docker engine automation | Advanced builds |
-| **Builder Pattern** | ✓ Fluent DSL | ✗ Imperative API | ✗ Imperative API | ✓ Limited |
-| **Version Checking** | ✓ Built-in with digest verification | ✗ Manual implementation | ✗ Not supported | ✗ Not supported |
-| **Image Sync** | ✓ Multi-platform with digest tracking | ✓ Via crane CLI | ✗ Requires pull+push | ✗ Not primary focus |
-| **Security Scanning** | ✓ Trivy integration | ✗ External tool | ✗ External tool | ✗ External tool |
-| **Security Auditing** | ✓ Dockle integration | ✗ External tool | ✗ External tool | ✗ External tool |
-| **Multi-platform** | ✓ Native support | ✓ Native support | ✓ Via manifest lists | ✓ Native support |
-| **SSH Operations** | ✓ Connection pooling | ✗ Not supported | ✗ Not supported | ✓ SSH forwarding |
-| **Error Handling** | 28 typed sentinels | Generic errors | Docker API errors | Buildkit errors |
-| **Testing Support** | ✓ `testutil` package | ✗ No helpers | ✗ No helpers | ✗ No helpers |
-
-**When to Use Quark:**
-- Need orchestrated image operations (sync → audit → scan workflows)
-- Require version drift detection with digest verification
-- Want type-safe, fluent Go API for image lifecycle management
-- Building deployment automation tools
-
-**When to Use Alternatives:**
-- **crane/go-containerregistry:** Low-level registry operations, custom tooling
-- **Docker SDK:** Full Docker engine control (containers, networks, volumes)
-- **Buildkit:** Advanced multi-stage builds, cache optimization
-
-Quark can work alongside these tools - it focuses on image lifecycle management while they handle lower-level concerns.
 
 ## Architecture
 
@@ -96,7 +66,6 @@ Before using Quark, ensure you have the following:
 ### Required for All Operations
 
 - **Go 1.24+** - For building and running plans
-- **Git** - For version control of your plans
 
 ### Required for Specific Operations
 
@@ -107,7 +76,7 @@ Before using Quark, ensure you have the following:
 
 ### SSH Setup (Required for Remote Builds)
 
-Quark uses SSH agent authentication for secure, keyless remote builds. Only Ed25519 keys are supported for security.
+Quark uses SSH agent authentication for secure, keyless remote builds. Only Ed25519 keys are supported.
 
 **Generate an Ed25519 key:**
 ```bash
@@ -135,35 +104,24 @@ Host build-node
 
 #### Security Note: First Connection
 
-On first connection to a new build node, if `~/.ssh/known_hosts` doesn't exist or doesn't contain the host key, you'll receive an error with instructions to run:
+On first connection to a new build node, if `~/.ssh/known_hosts` doesn't exist or contain the host key,
+you'll receive an error with instructions to run:
 
 ```bash
 ssh-keyscan -H build-node.example.com >> ~/.ssh/known_hosts
 ```
 
-**IMPORTANT:** This is vulnerable to MITM (man-in-the-middle) attacks on first use. For production systems, obtain host keys through a secure channel:
-
-- **Infrastructure-as-Code:** Provision known_hosts via Terraform, Ansible, or similar
-- **Trusted Admin:** Have a system administrator provide verified host keys
-- **Out-of-Band Verification:** Manually verify the key fingerprint matches what the server reports
-
-**For development/testing:** The trust-on-first-use model is acceptable, but verify you're on a trusted network.
+**IMPORTANT:** This is vulnerable to MITM (man-in-the-middle) attacks on first use. For production systems, obtain host keys through a secure channel.
 
 ### Getting Image Digests (Required for Sync/Scan)
 
-Image digests ensure immutability and security. Get digests from registries:
+Get digests from registries:
 
 **Using docker:**
 ```bash
 docker pull alpine:3.20
 docker inspect alpine:3.20 --format='{{index .RepoDigests 0}}'
 # Output: alpine@sha256:abc123...
-```
-
-**Using crane:**
-```bash
-crane digest alpine:3.20
-# Output: sha256:abc123...
 ```
 
 **From registry API:**

@@ -76,15 +76,22 @@ func (reg *Registry) Password() string {
 }
 
 // GetDigest returns the digest for an image reference.
-func (reg *Registry) GetDigest(ctx context.Context, imageRef string) (string, error) {
+// The name parameter should be just the repository path (e.g., "library/alpine", "timberio/vector").
+// The version parameter is the tag (e.g., "3.19", "latest").
+// The registry domain is automatically prepended.
+func (reg *Registry) GetDigest(ctx context.Context, name, version string) (string, error) {
 	client := registry.NewClient(reg.host, reg.username, reg.password, reg.log)
+	imageRef := reg.host + "/" + name + ":" + version
 	//nolint:wrapcheck
 	return client.GetDigest(ctx, imageRef)
 }
 
 // ListTags returns all tags for a repository.
-func (reg *Registry) ListTags(ctx context.Context, repository string) ([]string, error) {
+// The name parameter should be just the repository path (e.g., "library/alpine", "timberio/vector").
+// The registry domain is automatically prepended.
+func (reg *Registry) ListTags(ctx context.Context, name string) ([]string, error) {
 	client := registry.NewClient(reg.host, reg.username, reg.password, reg.log)
+	repository := reg.host + "/" + name
 	//nolint:wrapcheck
 	return client.ListTags(ctx, repository)
 }

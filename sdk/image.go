@@ -29,8 +29,12 @@ type ImageBuilder struct {
 }
 
 // NewImage creates a new Image builder with the specified name.
-// Name should be the repository name without the registry domain (e.g., "timberio/vector", "org/image").
-// Use Domain() to specify the registry domain.
+// Name can be a short name, repository path, or fully qualified reference:
+//   - Short: "alpine", "debian" (normalized to docker.io/library/alpine, docker.io/library/debian)
+//   - Repository: "timberio/vector", "org/image" (normalized to docker.io/timberio/vector, docker.io/org/image)
+//   - Fully qualified: "ghcr.io/foo/bar:v1.0", "docker.io/library/alpine:3.19"
+//
+// You can also use Domain(), Version(), and Digest() methods to set components explicitly.
 func NewImage(name string) *ImageBuilder {
 	return &ImageBuilder{
 		image: &Image{
@@ -112,9 +116,15 @@ func (builder *ImageBuilder) Build() (*Image, error) {
 
 // Name returns the image name in familiar form (user-facing).
 // Returns shortened form for Docker Hub official images: "alpine" instead of "library/alpine".
-// For internal operations requiring canonical form, use img.ref.Path directly.
+// For the canonical repository path, use Path().
 func (img *Image) Name() string {
 	return img.ref.FamiliarName()
+}
+
+// Path returns the canonical repository path (e.g., "library/alpine", "timberio/vector").
+// This is the full path as stored in the registry, which may differ from Name() for official images.
+func (img *Image) Path() string {
+	return img.ref.Path
 }
 
 // Domain returns the image registry domain (normalized).
