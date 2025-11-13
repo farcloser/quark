@@ -1,6 +1,8 @@
 package sdk
 
 import (
+	"context"
+
 	"github.com/rs/zerolog"
 
 	"github.com/farcloser/quark/internal/registry"
@@ -18,6 +20,7 @@ type Registry struct {
 type RegistryBuilder struct {
 	plan     *Plan
 	registry *Registry
+	built    bool
 }
 
 // Username sets the registry username.
@@ -36,7 +39,15 @@ func (builder *RegistryBuilder) Password(password string) *RegistryBuilder {
 
 // Build normalizes and stores the registry in the plan's registry collection.
 // Returns the Registry for direct use (e.g., version checking before plan execution).
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *RegistryBuilder) Build() (*Registry, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	// Normalize the domain (empty string → docker.io)
 	normalizedDomain := normalizeDomain(builder.registry.host)
 
@@ -65,15 +76,15 @@ func (reg *Registry) Password() string {
 }
 
 // GetDigest returns the digest for an image reference.
-func (reg *Registry) GetDigest(imageRef string) (string, error) {
+func (reg *Registry) GetDigest(ctx context.Context, imageRef string) (string, error) {
 	client := registry.NewClient(reg.host, reg.username, reg.password, reg.log)
 	//nolint:wrapcheck
-	return client.GetDigest(imageRef)
+	return client.GetDigest(ctx, imageRef)
 }
 
 // ListTags returns all tags for a repository.
-func (reg *Registry) ListTags(repository string) ([]string, error) {
+func (reg *Registry) ListTags(ctx context.Context, repository string) ([]string, error) {
 	client := registry.NewClient(reg.host, reg.username, reg.password, reg.log)
 	//nolint:wrapcheck
-	return client.ListTags(repository)
+	return client.ListTags(ctx, repository)
 }

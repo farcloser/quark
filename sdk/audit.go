@@ -13,8 +13,6 @@ import (
 )
 
 // AuditRuleSet represents audit rule severity.
-//
-//nolint:recvcheck // MarshalJSON uses value receiver, UnmarshalJSON requires pointer receiver
 type AuditRuleSet struct {
 	value string
 }
@@ -30,12 +28,12 @@ var (
 )
 
 // String returns the string representation of the rule set.
-func (r AuditRuleSet) String() string {
+func (r *AuditRuleSet) String() string {
 	return r.value
 }
 
 // MarshalJSON implements json.Marshaler for AuditRuleSet.
-func (r AuditRuleSet) MarshalJSON() ([]byte, error) {
+func (r *AuditRuleSet) MarshalJSON() ([]byte, error) {
 	//nolint:wrapcheck // Standard library JSON marshaling
 	return json.Marshal(r.value)
 }
@@ -81,6 +79,7 @@ type Audit struct {
 type AuditBuilder struct {
 	plan  *Plan
 	audit *Audit
+	built bool
 }
 
 // Dockerfile sets the Dockerfile path to audit.
@@ -123,7 +122,15 @@ func (builder *AuditBuilder) Timeout(duration time.Duration) *AuditBuilder {
 }
 
 // Build validates and adds the audit to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *AuditBuilder) Build() (*Audit, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	if builder.audit.dockerfile == "" && builder.audit.image == nil {
 		return nil, ErrAuditSourceRequired
 	}

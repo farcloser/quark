@@ -98,6 +98,7 @@ func (scanner *Scanner) ScanImage(
 		}
 	}
 
+	// XXX FIXME. Platforms should not be hardcoded like that here.
 	scanner.log.Info().
 		Str("image", imageRef).
 		Strs("platforms", []string{"linux/amd64", "linux/arm64"}).

@@ -12,6 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/farcloser/quark/filesystem"
 	"github.com/farcloser/quark/ssh"
 )
 
@@ -50,7 +51,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	t.Helper()
 
 	// Container configuration
-	containerName := fmt.Sprintf("quark-test-debian-%d", time.Now().Unix())
+	containerName := fmt.Sprintf("quark-test-debian-%d", time.Now().UnixNano())
 
 	// Read test SSH public key
 	testKeyPath := getTestKeyPath()
@@ -129,7 +130,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	}
 
 	sshDir := filepath.Join(homeDir, ".ssh")
-	if err := os.MkdirAll(sshDir, 0o700); err != nil { //nolint:revive // Standard SSH directory permissions
+	if err := os.MkdirAll(sshDir, filesystem.DirPermissionsPrivate); err != nil {
 		t.Fatalf("failed to create .ssh directory: %v", err)
 	}
 
@@ -144,8 +145,12 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	}
 
 	// Append to known_hosts
-	//nolint:gosec,revive // Path from os.UserHomeDir, standard SSH file permissions
-	knownHostsFile, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	//nolint:gosec // Path from os.UserHomeDir
+	knownHostsFile, err := os.OpenFile(
+		knownHostsPath,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+		filesystem.FilePermissionsPrivate,
+	)
 	if err != nil {
 		t.Fatalf("failed to open known_hosts: %v", err)
 	}
@@ -162,7 +167,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 
 	// Add test key to SSH agent for this session
 	// First, ensure the private key has correct permissions (SSH requires 0600)
-	if err := os.Chmod(testKeyPath, 0o600); err != nil { //nolint:revive // Standard SSH key permissions
+	if err := os.Chmod(testKeyPath, filesystem.FilePermissionsPrivate); err != nil {
 		t.Fatalf("failed to set test key permissions: %v", err)
 	}
 

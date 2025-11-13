@@ -92,8 +92,7 @@ func (ir *ImageReference) SuggestContainerName(suffix string) string {
 		name = path.Base(ir.Path)
 	}
 
-	//revive:disable:add-constant
-	return name + "-" + suffix[:5]
+	return name + "-" + suffix[:5] //revive:disable:add-constant
 }
 
 // Parse parses a raw image reference string and returns an ImageReference object.

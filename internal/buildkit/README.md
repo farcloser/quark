@@ -19,8 +19,8 @@ func NewClient(sshConn ssh.Connection, log zerolog.Logger) *Client
 
 // Build operations
 func (c *Client) Build(ctx context.Context, contextPath, dockerfilePath, platform string) (string, error)
-func (c *Client) BuildMultiPlatform(ctx context.Context, contextPath, dockerfilePath, tag string, platforms []string) error
-func (c *Client) UploadContext(localPath, remotePath string) error
+func (c *Client) BuildMultiPlatform(ctx context.Context, contextPath, dockerfilePath string, platforms []string, tag string) (string, error)
+func (c *Client) UploadContext(ctx context.Context, localPath, remotePath string) error
 func (c *Client) GetDigest(tag string) (string, error)
 ```
 
@@ -33,11 +33,12 @@ func (c *Client) GetDigest(tag string) (string, error)
 
 ## Dependencies
 
-- External: `moby/buildkit/client` (for BuildKit types/interfaces)
-- Internal: `hadron/sdk/ssh` for SSH connection management
+- External: `carapace-sh/carapace-shlex` for shell command escaping
+- Internal: `github.com/farcloser/quark/ssh` for SSH connection management
 
 ## Notes
 
 - Requires BuildKit/Docker to be installed and configured on remote nodes
-- Uses `--load` flag to import built images into local Docker daemon on remote host
-- Multi-platform builds push each platform image with platform suffix (e.g., `image:tag-amd64`)
+- Single-platform builds use `--load` flag to import built images into local Docker daemon on remote host
+- Multi-platform builds use `--push` flag with multiple `--platform` values, creating a manifest list and pushing directly to registry
+- Multi-platform builds require a docker-container builder (automatically created as "quark-builder")

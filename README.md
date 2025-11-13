@@ -8,13 +8,13 @@ Quark is a declarative container image management tool written in Go, designed f
 - **Registry Authentication**: Define registry credentials in a plan, automatically looked up by domain
 - **Distributed Builds**: Build multi-platform images using SSH-accessible BuildKit nodes
 - **Vulnerability Scanning**: Scan images with Trivy for CVEs and security vulnerabilities
-- **Quality Auditing**: Audit Dockerfiles (hadolint) and images (dockle) for best practices
+- **Quality Auditing**: Audit Dockerfiles (godolint SDK) and images (dockle) for best practices
 - **Version Checking**: Monitor upstream image registries for new releases with digest verification
 - **Type-Safe Plans**: Define operations as Go programs with compile-time validation
 - **Infrastructure Agnostic**: No hard-coded dependencies on specific registries or infrastructure
 - **Idempotent Operations**: Digest-based change detection prevents unnecessary work
 - **1Password Integration**: Retrieve credentials securely from 1Password vaults
-- **Auto-Installing Tools**: Trivy, Dockle, and hadolint automatically installed on first use
+- **Auto-Installing Tools**: Trivy and Dockle automatically installed on first use
 - **SSH Connection Pooling**: Efficient, secure SSH connections to BuildKit nodes with agent-based authentication
 
 ## Comparison to Alternatives
@@ -66,7 +66,7 @@ Quark can work alongside these tools - it focuses on image lifecycle management 
     │  • Registry Client (OCI)        │
     │  • BuildKit Client (SSH)        │
     │  • Trivy Scanner (local)        │
-    │  • Audit Tools (hadolint/dockle)│
+    │  • Audit Tools (godolint/dockle)│
     └────┬────────────────────────────┘
          │
     ┌────▼──────────────────────┐
@@ -287,8 +287,6 @@ This eliminates passing registry objects everywhere and makes the API cleaner.
 
 ## SDK Operations
 
-> **Thread Safety**: Plan building (adding operations, registries, nodes) is not thread-safe. Build your plan in a single goroutine, then execute it. Plan execution is safe and operations run sequentially.
-
 ### Registry Collection
 
 Registries are stored in the plan and automatically looked up by domain:
@@ -431,7 +429,7 @@ Audit Dockerfiles and images for best practices:
 ```go
 // Audit both Dockerfile and image
 if _, err := plan.Audit("audit-complete").
-    Dockerfile("./Dockerfile").       // hadolint
+    Dockerfile("./Dockerfile").       // godolint SDK
     Source(destImage).                // dockle
     RuleSet(sdk.RuleSetStrict).
     IgnoreChecks("CIS-DI-0005", "CIS-DI-0006").
@@ -468,9 +466,9 @@ if _, err := plan.Audit("audit-image").
 - `DKL-DI-0005` - Allow specific exposed ports
 
 **Features:**
-- Dockerfile linting with hadolint
+- Dockerfile linting with godolint SDK
 - Image security auditing with dockle
-- Both tools auto-installed on first use
+- Dockle auto-installed on first use
 - Can audit Dockerfile, image, or both in one operation
 
 ### Build
@@ -658,6 +656,23 @@ cd examples/sync
 quark execute -p main.go
 ```
 
+## IMPORTANT caveats
+
+### Concurrency
+
+There is no thread safety guarantees.
+Plan building (adding operations, registries, nodes) is not thread-safe.
+You should build your plan in a single goroutine, then execute it.
+Plan execution is safe and operations run sequentially.
+
+### NOT to be used with untrusted input
+
+This tool is meant to be used by developers and automated system from trusted inputs
+(eg: plans that have been authored by the team).
+
+Using it as a service, taking in user controlled input, WILL result in remote code
+execution on build-nodes, with the privileges of user associated with the ssh key being used.
+
 ## Development
 
 ### Build & Install
@@ -691,7 +706,7 @@ quark/
 ├── cmd/quark/          # CLI entry point
 ├── sdk/                # Public SDK API
 ├── internal/           # Internal packages
-│   ├── audit/          # hadolint/dockle integration
+│   ├── audit/          # godolint SDK/dockle integration
 │   ├── buildkit/       # SSH-based BuildKit client
 │   ├── registry/       # OCI registry operations
 │   ├── sync/           # Image sync implementation
@@ -705,14 +720,14 @@ quark/
 
 ## Technology Stack
 
-- **Language**: Go 1.24.0
+- **Language**: go 1.24.3
 - **CLI**: urfave/cli/v3 (v3.5.0)
 - **Logging**: zerolog (v1.34.0)
 - **Registry**: google/go-containerregistry (v0.20.6)
 - **Build**: moby/buildkit (v0.25.1)
 - **SSH**: golang.org/x/crypto (v0.43.0), pkg/sftp (v1.13.9)
 - **Scanning**: Trivy (v0.59.1) - auto-installed
-- **Auditing**: hadolint, Dockle (v0.4.15) - auto-installed
+- **Auditing**: godolint SDK (pure Go), Dockle (v0.4.15) - auto-installed
 
 ## License
 

@@ -1,4 +1,3 @@
-//nolint:revive,varnamelen
 package registry_test
 
 import (
@@ -41,7 +40,7 @@ func TestClient_GetImage_InvalidReference(t *testing.T) {
 			t.Parallel()
 
 			client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-			_, err := client.GetImage(tt.ref)
+			_, err := client.GetImage(t.Context(), tt.ref)
 
 			if err == nil {
 				t.Fatal("GetImage() error = nil, want error")
@@ -80,7 +79,7 @@ func TestClient_GetDigest_InvalidReference(t *testing.T) {
 			t.Parallel()
 
 			client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-			_, err := client.GetDigest(tt.ref)
+			_, err := client.GetDigest(t.Context(), tt.ref)
 
 			if err == nil {
 				t.Fatal("GetDigest() error = nil, want error")
@@ -100,7 +99,7 @@ func TestClient_CopyImage_InvalidSourceReference(t *testing.T) {
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
 
-	_, err := client.CopyImage("invalid@@@reference", "ghcr.io/valid/image:latest", dstClient)
+	_, err := client.CopyImage(t.Context(), "invalid@@@reference", "ghcr.io/valid/image:latest", dstClient)
 
 	if err == nil {
 		t.Fatal("CopyImage() error = nil, want error")
@@ -118,7 +117,7 @@ func TestClient_CopyImage_InvalidDestinationReference(t *testing.T) {
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
 
-	_, err := client.CopyImage("docker.io/library/alpine:latest", "invalid@@@reference", dstClient)
+	_, err := client.CopyImage(t.Context(), "docker.io/library/alpine:latest", "invalid@@@reference", dstClient)
 
 	if err == nil {
 		t.Fatal("CopyImage() error = nil, want error")
@@ -136,7 +135,7 @@ func TestClient_CopyIndex_InvalidSourceReference(t *testing.T) {
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
 
-	err := client.CopyIndex("invalid@@@reference", "ghcr.io/valid/image:latest", dstClient)
+	err := client.CopyIndex(t.Context(), "invalid@@@reference", "ghcr.io/valid/image:latest", dstClient)
 
 	if err == nil {
 		t.Fatal("CopyIndex() error = nil, want error")
@@ -154,7 +153,7 @@ func TestClient_CopyIndex_InvalidDestinationReference(t *testing.T) {
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
 
-	err := client.CopyIndex("docker.io/library/alpine:latest", "invalid@@@reference", dstClient)
+	err := client.CopyIndex(t.Context(), "docker.io/library/alpine:latest", "invalid@@@reference", dstClient)
 
 	if err == nil {
 		t.Fatal("CopyIndex() error = nil, want error")
@@ -171,7 +170,7 @@ func TestClient_GetPlatformDigests_InvalidReference(t *testing.T) {
 
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 
-	_, err := client.GetPlatformDigests("invalid@@@reference")
+	_, err := client.GetPlatformDigests(t.Context(), "invalid@@@reference")
 
 	if err == nil {
 		t.Fatal("GetPlatformDigests() error = nil, want error")
@@ -189,6 +188,7 @@ func TestClient_FetchPlatformImage_InvalidSourceReference(t *testing.T) {
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 
 	_, err := client.FetchPlatformImage(
+		t.Context(),
 		"invalid@@@reference",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	)
@@ -208,7 +208,7 @@ func TestClient_PushManifestList_InvalidReference(t *testing.T) {
 
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 
-	_, err := client.PushManifestList("invalid@@@reference", nil)
+	_, err := client.PushManifestList(t.Context(), "invalid@@@reference", nil)
 
 	if err == nil {
 		t.Fatal("PushManifestList() error = nil, want error")
@@ -225,7 +225,7 @@ func TestClient_CheckExists_InvalidReference(t *testing.T) {
 
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 
-	_, err := client.CheckExists("invalid@@@reference")
+	_, err := client.CheckExists(t.Context(), "invalid@@@reference")
 
 	if err == nil {
 		t.Fatal("CheckExists() error = nil, want error")
@@ -242,7 +242,7 @@ func TestClient_GetImageHandle_InvalidReference(t *testing.T) {
 
 	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
 
-	_, err := client.GetImageHandle("invalid@@@reference")
+	_, err := client.GetImageHandle(t.Context(), "invalid@@@reference")
 
 	if err == nil {
 		t.Fatal("GetImageHandle() error = nil, want error")

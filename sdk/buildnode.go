@@ -16,8 +16,9 @@ type BuildNode struct {
 
 // BuildNodeBuilder builds a BuildNode.
 type BuildNodeBuilder struct {
-	plan *Plan
-	node *BuildNode
+	plan  *Plan
+	node  *BuildNode
+	built bool
 }
 
 // Endpoint sets the SSH endpoint (IP, hostname, or SSH config alias).
@@ -35,7 +36,15 @@ func (builder *BuildNodeBuilder) Platform(platform Platform) *BuildNodeBuilder {
 }
 
 // Build validates and adds the build node to the plan.
+// The builder becomes unusable after Build() is called.
+// Create a new builder for each operation.
 func (builder *BuildNodeBuilder) Build() (*BuildNode, error) {
+	if builder.built {
+		return nil, ErrBuilderAlreadyUsed
+	}
+
+	builder.built = true
+
 	builder.node.endpoint = strings.TrimSpace(builder.node.endpoint)
 	if builder.node.endpoint == "" {
 		return nil, ErrBuildNodeEndpointRequired

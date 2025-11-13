@@ -5,18 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/rs/zerolog"
 
+	"github.com/farcloser/godolint/sdk"
+
 	"github.com/farcloser/quark/internal/tools"
 )
 
-// Auditor wraps hadolint and dockle CLI operations.
+// Auditor wraps godolint SDK and dockle CLI operations.
 type Auditor struct {
 	log       zerolog.Logger
 	installer *tools.Installer
+	linter    *sdk.Linter
 }
 
 // NewAuditor creates a new auditor.
@@ -24,6 +28,7 @@ func NewAuditor(log zerolog.Logger) *Auditor {
 	return &Auditor{
 		log:       log,
 		installer: tools.NewInstaller(log),
+		linter:    sdk.New(), // Use godolint SDK with all rules by default
 	}
 }
 
@@ -34,21 +39,6 @@ type ImageAuditOptions struct {
 	Password     string   // Registry password (optional)
 	RuleSet      string   // Rule set: "strict", "recommended", or "minimal"
 	IgnoreChecks []string // Dockle checks to ignore (e.g., "DKL-DI-0005")
-}
-
-// HadolintIssue represents a single hadolint issue.
-type HadolintIssue struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Line    int    `json:"line"`
-	Level   string `json:"level"`
-}
-
-// HadolintResult represents hadolint scan results.
-//
-//nolint:tagliatelle
-type HadolintResult struct {
-	Issues []HadolintIssue `json:""`
 }
 
 // DockleDetail represents a single dockle issue detail.
@@ -72,27 +62,31 @@ type Result struct {
 	Output           string
 }
 
-// AuditDockerfile audits a Dockerfile with hadolint.
+// AuditDockerfile audits a Dockerfile using godolint SDK.
 func (auditor *Auditor) AuditDockerfile(ctx context.Context, dockerfilePath string) (*Result, error) {
 	auditor.log.Info().
 		Str("dockerfile", dockerfilePath).
-		Msg("auditing Dockerfile with hadolint")
+		Msg("auditing Dockerfile with godolint")
 
-	cmd := exec.CommandContext(ctx, "hadolint", "--format", "json", dockerfilePath)
-	output, err := cmd.CombinedOutput()
+	// Read Dockerfile content
+	//nolint:gosec
+	content, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Dockerfile: %w", err)
+	}
 
-	// hadolint returns non-zero when issues found
-	var issues []map[string]any
-	if len(output) > 0 {
-		if parseErr := json.Unmarshal(output, &issues); parseErr != nil {
-			auditor.log.Debug().Err(parseErr).Msg("failed to parse hadolint output")
-		}
+	// Lint with godolint SDK
+	lintResult, err := auditor.linter.Lint(ctx, content)
+	if err != nil {
+		auditor.log.Error().Err(err).Msg("godolint linting failed")
+
+		return nil, fmt.Errorf("godolint linting failed: %w", err)
 	}
 
 	result := &Result{
-		DockerfileIssues: len(issues),
-		Passed:           len(issues) == 0 && err == nil,
-		Output:           formatHadolintOutput(issues),
+		DockerfileIssues: len(lintResult.Violations),
+		Passed:           lintResult.Passed,
+		Output:           formatGodolintOutput(lintResult.Violations),
 	}
 
 	auditor.log.Info().
@@ -120,6 +114,9 @@ func (auditor *Auditor) AuditImage(ctx context.Context, imageRef string, opts Im
 
 	//nolint:gosec // Image ref is from user config
 	cmd := exec.CommandContext(ctx, docklePath, args...)
+
+	// Initialize environment with parent variables
+	cmd.Env = os.Environ()
 
 	// Set credentials via environment variables to avoid exposing in process list
 	// DOCKLE_AUTH_URL scopes credentials to the specific registry
@@ -205,32 +202,27 @@ func (auditor *Auditor) AuditImage(ctx context.Context, imageRef string, opts Im
 	return result, nil
 }
 
-func formatHadolintOutput(issues []map[string]any) string {
-	if len(issues) == 0 {
+func formatGodolintOutput(violations []sdk.Violation) string {
+	if len(violations) == 0 {
 		return "No Dockerfile issues found\n"
 	}
 
 	var builder strings.Builder
 
-	_, _ = builder.WriteString("DOCKERFILE AUDIT RESULTS (hadolint)\n")
+	_, _ = builder.WriteString("DOCKERFILE AUDIT RESULTS (godolint)\n")
 	_, _ = builder.WriteString(strings.Repeat("=", 80) + "\n\n")
 
-	for _, issue := range issues {
-		code := getString(issue, "code")
-		message := getString(issue, "message")
-		line := getInt(issue, "line")
-		level := getString(issue, "level")
-
+	for _, violation := range violations {
 		_, _ = builder.WriteString(fmt.Sprintf(
 			"[%s] Line %d: %s\n  %s\n\n",
-			level,
-			line,
-			code,
-			message,
+			violation.Severity,
+			violation.Line,
+			violation.Code,
+			violation.Message,
 		))
 	}
 
-	_, _ = builder.WriteString(fmt.Sprintf("Total issues: %d\n", len(issues)))
+	_, _ = builder.WriteString(fmt.Sprintf("Total issues: %d\n", len(violations)))
 
 	return builder.String()
 }
@@ -263,24 +255,4 @@ func formatDockleOutput(result *DockleResult) string {
 	_, _ = builder.WriteString(fmt.Sprintf("Total issues: %d\n", len(result.Details)))
 
 	return builder.String()
-}
-
-func getString(data map[string]any, key string) string {
-	if val, ok := data[key]; ok {
-		if str, ok := val.(string); ok {
-			return str
-		}
-	}
-
-	return ""
-}
-
-func getInt(data map[string]any, key string) int {
-	if val, ok := data[key]; ok {
-		if num, ok := val.(float64); ok {
-			return int(num)
-		}
-	}
-
-	return 0
 }

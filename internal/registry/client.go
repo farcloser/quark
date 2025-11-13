@@ -2,11 +2,13 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -53,13 +55,13 @@ func NewClient(host, username, password string, log zerolog.Logger) *Client {
 }
 
 // GetImage retrieves an image descriptor from the registry.
-func (client *Client) GetImage(imageRef string) (remote.Descriptor, error) {
+func (client *Client) GetImage(ctx context.Context, imageRef string) (remote.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return remote.Descriptor{}, fmt.Errorf("%w: %w", ErrParseImageReference, err)
 	}
 
-	desc, err := remote.Get(ref, client.remoteOptions()...)
+	desc, err := remote.Get(ref, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return remote.Descriptor{}, fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
@@ -69,7 +71,7 @@ func (client *Client) GetImage(imageRef string) (remote.Descriptor, error) {
 
 // CopyImage copies an image from source to destination.
 // Returns the source image object (fetched by digest) for trusted digest computation.
-func (client *Client) CopyImage(srcRef, dstRef string, dstClient *Client) (v1.Image, error) {
+func (client *Client) CopyImage(ctx context.Context, srcRef, dstRef string, dstClient *Client) (v1.Image, error) {
 	srcNameRef, err := name.ParseReference(srcRef)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrParseSourceReference, err)
@@ -86,13 +88,13 @@ func (client *Client) CopyImage(srcRef, dstRef string, dstClient *Client) (v1.Im
 		Msg("copying image")
 
 	// Get source image (TRUSTED - must be called with digest reference)
-	img, err := remote.Image(srcNameRef, client.remoteOptions()...)
+	img, err := remote.Image(srcNameRef, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source image: %w", err)
 	}
 
 	// Push to destination
-	if err := remote.Write(dstNameRef, img, dstClient.remoteOptions()...); err != nil {
+	if err := remote.Write(dstNameRef, img, dstClient.remoteOptionsWithContext(ctx)...); err != nil {
 		return nil, fmt.Errorf("failed to write destination image: %w", err)
 	}
 
@@ -102,7 +104,7 @@ func (client *Client) CopyImage(srcRef, dstRef string, dstClient *Client) (v1.Im
 }
 
 // CopyIndex copies a multi-platform image index from source to destination.
-func (client *Client) CopyIndex(srcRef, dstRef string, dstClient *Client) error {
+func (client *Client) CopyIndex(ctx context.Context, srcRef, dstRef string, dstClient *Client) error {
 	srcNameRef, err := name.ParseReference(srcRef)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrParseSourceReference, err)
@@ -119,13 +121,13 @@ func (client *Client) CopyIndex(srcRef, dstRef string, dstClient *Client) error 
 		Msg("copying image index")
 
 	// Get source index
-	idx, err := remote.Index(srcNameRef, client.remoteOptions()...)
+	idx, err := remote.Index(srcNameRef, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return fmt.Errorf("failed to get source index: %w", err)
 	}
 
 	// Push to destination
-	if err := remote.WriteIndex(dstNameRef, idx, dstClient.remoteOptions()...); err != nil {
+	if err := remote.WriteIndex(dstNameRef, idx, dstClient.remoteOptionsWithContext(ctx)...); err != nil {
 		return fmt.Errorf("failed to write destination index: %w", err)
 	}
 
@@ -133,14 +135,14 @@ func (client *Client) CopyIndex(srcRef, dstRef string, dstClient *Client) error 
 }
 
 // GetPlatformDigests returns platform-specific digests for a multi-platform image.
-func (client *Client) GetPlatformDigests(imageRef string) (map[string]string, error) {
+func (client *Client) GetPlatformDigests(ctx context.Context, imageRef string) (map[string]string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrParseImageReference, err)
 	}
 
 	// Get the image index
-	idx, err := remote.Index(ref, client.remoteOptions()...)
+	idx, err := remote.Index(ref, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrGetImageIndex, err)
 	}
@@ -166,7 +168,7 @@ func (client *Client) GetPlatformDigests(imageRef string) (map[string]string, er
 // FetchPlatformImage fetches a specific platform image by digest from source.
 // Returns the source image object (fetched by digest) for trusted manifest list creation.
 // The image is NOT pushed - it will be pushed by digest when PushManifestList is called.
-func (client *Client) FetchPlatformImage(srcRef, platformDigest string) (v1.Image, error) {
+func (client *Client) FetchPlatformImage(ctx context.Context, srcRef, platformDigest string) (v1.Image, error) {
 	// Parse source with digest
 	srcDigestRef := fmt.Sprintf("%s@%s", srcRef, platformDigest)
 
@@ -180,7 +182,7 @@ func (client *Client) FetchPlatformImage(srcRef, platformDigest string) (v1.Imag
 		Msg("fetching platform image")
 
 	// Get source image by digest (TRUSTED - fetched by known digest)
-	img, err := remote.Image(srcNameRef, client.remoteOptions()...)
+	img, err := remote.Image(srcNameRef, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source image: %w", err)
 	}
@@ -192,13 +194,13 @@ func (client *Client) FetchPlatformImage(srcRef, platformDigest string) (v1.Imag
 }
 
 // GetDigest returns the digest for an image reference.
-func (client *Client) GetDigest(imageRef string) (string, error) {
+func (client *Client) GetDigest(ctx context.Context, imageRef string) (string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrParseImageReference, err)
 	}
 
-	desc, err := remote.Get(ref, client.remoteOptions()...)
+	desc, err := remote.Get(ref, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
@@ -209,7 +211,11 @@ func (client *Client) GetDigest(imageRef string) (string, error) {
 // PushManifestList creates and pushes a manifest list from platform-specific images.
 // platformImages is a map of platform string (e.g., "linux/amd64") to image reference.
 // Returns the digest of the created manifest list.
-func (client *Client) PushManifestList(manifestRef string, platformImages map[string]v1.Image) (string, error) {
+func (client *Client) PushManifestList(
+	ctx context.Context,
+	manifestRef string,
+	platformImages map[string]v1.Image,
+) (string, error) {
 	client.log.Debug().
 		Str("manifest", manifestRef).
 		Int("platforms", len(platformImages)).
@@ -254,7 +260,7 @@ func (client *Client) PushManifestList(manifestRef string, platformImages map[st
 	}
 
 	// Push the manifest list
-	if err := remote.WriteIndex(ref, idx, client.remoteOptions()...); err != nil {
+	if err := remote.WriteIndex(ref, idx, client.remoteOptionsWithContext(ctx)...); err != nil {
 		return "", fmt.Errorf("failed to push manifest list: %w", err)
 	}
 
@@ -272,13 +278,13 @@ func (client *Client) PushManifestList(manifestRef string, platformImages map[st
 // CheckExists checks if an image exists in the registry.
 // Returns (false, nil) only for 404/not found errors.
 // Returns (false, err) for all other errors (network, auth, etc.).
-func (client *Client) CheckExists(imageRef string) (bool, error) {
+func (client *Client) CheckExists(ctx context.Context, imageRef string) (bool, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrParseImageReference, err)
 	}
 
-	_, err = remote.Get(ref, client.remoteOptions()...)
+	_, err = remote.Get(ref, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		// Check if this is a 404/not found error
 		var transportErr *transport.Error
@@ -295,13 +301,13 @@ func (client *Client) CheckExists(imageRef string) (bool, error) {
 
 // GetImageHandle fetches a v1.Image for the given reference.
 // This is needed for creating manifest lists.
-func (client *Client) GetImageHandle(imageRef string) (v1.Image, error) {
+func (client *Client) GetImageHandle(ctx context.Context, imageRef string) (v1.Image, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrParseImageReference, err)
 	}
 
-	img, err := remote.Image(ref, client.remoteOptions()...)
+	img, err := remote.Image(ref, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
@@ -310,13 +316,13 @@ func (client *Client) GetImageHandle(imageRef string) (v1.Image, error) {
 }
 
 // ListTags returns all tags for a repository.
-func (client *Client) ListTags(repository string) ([]string, error) {
+func (client *Client) ListTags(ctx context.Context, repository string) ([]string, error) {
 	repo, err := name.NewRepository(repository)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse repository: %w", err)
 	}
 
-	tags, err := remote.List(repo, client.remoteOptions()...)
+	tags, err := remote.List(repo, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tags: %w", err)
 	}
@@ -324,9 +330,25 @@ func (client *Client) ListTags(repository string) ([]string, error) {
 	return tags, nil
 }
 
-// remoteOptions returns remote options with authentication.
+// remoteOptions returns remote options with authentication and retry configuration.
 func (client *Client) remoteOptions() []remote.Option {
-	opts := []remote.Option{}
+	opts := []remote.Option{
+		// Retry on rate limits and transient server errors
+		remote.WithRetryStatusCodes(
+			http.StatusTooManyRequests,     // 429 - Rate limit
+			http.StatusInternalServerError, // 500 - Server error
+			http.StatusBadGateway,          // 502 - Proxy error
+			http.StatusServiceUnavailable,  // 503 - Service overloaded
+			http.StatusGatewayTimeout,      // 504 - Upstream timeout
+		),
+		// Use exponential backoff: 1s, 2s, 4s, 8s, 16s (max 5 attempts)
+		remote.WithRetryBackoff(remote.Backoff{
+			Duration: 1 * time.Second,
+			Factor:   2.0,
+			Jitter:   0.1,
+			Steps:    5,
+		}),
+	}
 
 	if client.username != "" && client.password != "" {
 		auth := &authn.Basic{
@@ -335,6 +357,14 @@ func (client *Client) remoteOptions() []remote.Option {
 		}
 		opts = append(opts, remote.WithAuth(auth))
 	}
+
+	return opts
+}
+
+// remoteOptionsWithContext returns remote options with context, authentication, and retry configuration.
+func (client *Client) remoteOptionsWithContext(ctx context.Context) []remote.Option {
+	opts := client.remoteOptions()
+	opts = append(opts, remote.WithContext(ctx))
 
 	return opts
 }

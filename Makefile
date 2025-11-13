@@ -214,13 +214,13 @@ GOCMD=go
 GOBUILD=$(GOCMD) build
 GOINSTALL=$(GOCMD) install
 
-build: ## Build the quark binary
+build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p bin
 	$(GOBUILD) -o $(BINARY_PATH) ./cmd/$(BINARY_NAME)
 	@echo "Binary built: $(BINARY_PATH)"
 
-install: ## Install quark to GOPATH/bin
+install: ## Install to GOPATH/bin
 	@echo "Installing $(BINARY_NAME)..."
 	$(GOINSTALL) ./cmd/$(BINARY_NAME)
 	@echo "Installed to $$(go env GOPATH)/bin/$(BINARY_NAME)"
