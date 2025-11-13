@@ -31,7 +31,7 @@ func TestAuditor_AuditDockerfile_NonExistentFile(t *testing.T) {
 
 	result, err := auditor.AuditDockerfile(ctx, "/nonexistent/Dockerfile")
 
-	// Should fail when hadolint can't find the file
+	// Should fail when godolint can't find the file
 	if err == nil && (result == nil || result.Passed) {
 		t.Error("AuditDockerfile() expected failure for non-existent file")
 	}
@@ -60,10 +60,11 @@ func TestAuditor_AuditDockerfile_DetectsIssues(t *testing.T) {
 	tmpDir := t.TempDir()
 	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
 
-	// This Dockerfile has issues that all hadolint versions will catch:
-	// - DL3006: Using latest tag (always tag the version explicitly)
+	// This Dockerfile has issues that godolint will catch:
+	// - DL3007: Using latest tag
 	// - DL3008: Pin versions in apt-get install
 	// - DL3009: Delete apt-get lists after installing
+	// - DL3057: Missing HEALTHCHECK
 	flawedDockerfile := `FROM debian:latest
 RUN apt-get update && apt-get install -y curl
 COPY . /app
@@ -77,17 +78,15 @@ COPY . /app
 	ctx := t.Context()
 
 	result, err := auditor.AuditDockerfile(ctx, dockerfilePath)
-	// Note: This test requires hadolint to be installed
-	// If hadolint is not installed, the test will fail
 	if err != nil {
-		t.Skipf("Skipping test - hadolint may not be installed: %v", err)
+		t.Fatalf("AuditDockerfile() error = %v, want nil", err)
 	}
 
 	if result == nil {
 		t.Fatal("AuditDockerfile() result = nil, want non-nil result")
 	}
 
-	// The flawed Dockerfile should have issues (DL3006, DL3008, DL3009 are old rules)
+	// The flawed Dockerfile should have issues
 	if result.DockerfileIssues == 0 {
 		t.Error("AuditDockerfile() found no issues in flawed Dockerfile, expected issues")
 	}

@@ -82,7 +82,7 @@ linters:
         - name: add-constant
           arguments:
             - allowInts: "0,1,2,3,4,-1"
-              allowStrs: '"op://","","%w: %q","%w: %w","%w: %s"," ","-"'
+              allowStrs: '"op://","","%w: %q","%w: %w","%w: %s"," ","-","`","\n"'
         - name: cognitive-complexity
           arguments: [30]
         - name: cyclomatic
@@ -109,16 +109,17 @@ linters:
             - $all
           allow:
             - $gostd
+            - github.com/farcloser/godolint
+            - github.com/farcloser/quark
             - github.com/rs/zerolog
             - github.com/urfave/cli
+            - golang.org/x/crypto/ssh
+            - github.com/opencontainers/go-digest
+            - github.com/kevinburke/ssh_config
             - github.com/carapace-sh/carapace-shlex
             - github.com/google/go-containerregistry
-            - github.com/distribution/reference
-            - github.com/opencontainers/go-digest
-            - github.com/farcloser/quark
-            - golang.org/x/crypto/ssh
             - github.com/joho/godotenv
-            - github.com/kevinburke/ssh_config
+            - github.com/distribution/reference
             - github.com/pkg/sft
             - gotest.tools/v3/assert
 

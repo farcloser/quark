@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Provides Dockerfile and container image quality auditing using industry-standard tools (hadolint and dockle).
+Provides Dockerfile and container image quality auditing using industry-standard tools (godolint SDK and dockle).
 
 ## Functionality
 
-- **Dockerfile linting** via hadolint - detects best practice violations, security issues, and potential bugs in Dockerfiles
+- **Dockerfile linting** via godolint SDK - detects best practice violations, security issues, and potential bugs in Dockerfiles
 - **Image security auditing** via dockle - checks built images for security misconfigurations, secrets, and compliance violations
 - **Configurable severity levels** - supports different rule sets (strict, recommended, minimal)
 - **Check exclusions** - ability to ignore specific dockle checks via IgnoreChecks
@@ -41,19 +41,20 @@ type Result struct {
 
 ## Design
 
-- **Tool abstraction**: Wraps external CLI tools (hadolint, dockle) with structured Go interface
-- **Automatic tool installation**: Uses internal/tools to ensure dockle is available (hadolint expected in PATH)
+- **SDK integration**: Uses godolint SDK directly for Dockerfile linting (no external binary dependency)
+- **Tool abstraction**: Wraps dockle CLI with structured Go interface
+- **Automatic tool installation**: Uses internal/tools to ensure dockle is available
 - **Configurable strictness**: Supports different rule sets for dockle audits:
   - `strict`: Fails on FATAL and WARN levels
   - `recommended`: Fails only on FATAL level
   - `minimal`: Fails only on FATAL level
-- **Structured output**: Parses JSON output from tools and provides formatted, human-readable results
+- **Structured output**: Provides formatted, human-readable results from linting and scanning
 - **Credential security**: Registry credentials passed via environment variables (not process list)
 
 ## Dependencies
 
-- External: `hadolint` (Dockerfile linter), `dockle` (image security scanner)
-- Internal: `internal/tools` for dockle installation management
+- External: `dockle` (image security scanner)
+- Internal: `github.com/farcloser/godolint/sdk` for Dockerfile linting, `internal/tools` for dockle installation management
 
 ## Security Considerations
 
