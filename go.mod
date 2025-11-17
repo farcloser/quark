@@ -12,7 +12,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/pkg/sftp v1.13.10
 	github.com/rs/zerolog v1.34.0
-	github.com/urfave/cli/v3 v3.6.0
+	github.com/urfave/cli/v3 v3.6.1
 	golang.org/x/crypto v0.44.0
 	gotest.tools/v3 v3.0.3
 )
