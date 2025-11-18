@@ -180,9 +180,11 @@ func (auditJob *Audit) execute(ctx context.Context) error {
 			return fmt.Errorf("failed to audit Dockerfile: %w", err)
 		}
 
-		auditJob.log.Info().Msg(result.Output)
+		if result.Passed {
+			auditJob.log.Info().Msg(result.Output)
+		} else {
+			auditJob.log.Warn().Msg(result.Output)
 
-		if !result.Passed {
 			allPassed = false
 		}
 	}
@@ -205,16 +207,16 @@ func (auditJob *Audit) execute(ctx context.Context) error {
 			return fmt.Errorf("failed to audit image: %w", err)
 		}
 
-		auditJob.log.Info().Msg(result.Output)
+		if result.Passed {
+			auditJob.log.Info().Msg(result.Output)
+		} else {
+			auditJob.log.Warn().Msg(result.Output)
 
-		if !result.Passed {
 			allPassed = false
 		}
 	}
 
 	if !allPassed {
-		auditJob.log.Warn().Msg("audit found issues")
-
 		return ErrAuditFoundIssues
 	}
 

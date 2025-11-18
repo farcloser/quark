@@ -1,41 +1,46 @@
 package sdk
 
-import "errors"
+import (
+	"errors"
 
-// 1Password errors.
+	"github.com/farcloser/quark/internal/secrets"
+)
+
+// Secret reference errors (re-exported from internal/secrets for backward compatibility).
 var (
 	// ErrDocumentReferenceEmpty indicates document reference is empty.
-	ErrDocumentReferenceEmpty = errors.New("document reference cannot be empty")
+	// Deprecated: Use ErrReferenceEmpty for new code.
+	ErrDocumentReferenceEmpty = secrets.ErrReferenceEmpty
 
-	// ErrDocumentReferenceInvalidPrefix indicates document reference missing 'op://' prefix.
-	ErrDocumentReferenceInvalidPrefix = errors.New("document reference must start with 'op://'")
+	// ErrDocumentReferenceInvalidPrefix indicates document reference has invalid scheme.
+	// Deprecated: Use ErrReferenceInvalidFormat for new code.
+	ErrDocumentReferenceInvalidPrefix = secrets.ErrReferenceInvalidFormat
 
 	// ErrDocumentReferenceInvalidFormat indicates document reference has invalid format.
-	ErrDocumentReferenceInvalidFormat = errors.New("invalid document reference format")
+	// Deprecated: Use ErrReferenceInvalidFormat for new code.
+	ErrDocumentReferenceInvalidFormat = secrets.ErrReferenceInvalidFormat
 
-	// ErrDocumentReferenceEmptyParts indicates document reference has empty vault or item.
-	ErrDocumentReferenceEmptyParts = errors.New("document reference vault and item cannot be empty")
+	// ErrDocumentReferenceEmptyParts indicates document reference has empty required parts.
+	// Deprecated: Use ErrReferenceEmptyParts for new code.
+	ErrDocumentReferenceEmptyParts = secrets.ErrReferenceEmptyParts
 
 	// ErrDocumentEmpty indicates document resolved to empty content.
-	ErrDocumentEmpty = errors.New("document resolved to empty content")
+	ErrDocumentEmpty = secrets.ErrDocumentEmpty
 
-	// ErrItemReferenceEmpty indicates item reference is empty.
-	ErrItemReferenceEmpty = errors.New("item reference cannot be empty")
+	// ErrReferenceEmpty indicates reference is empty.
+	ErrReferenceEmpty = secrets.ErrReferenceEmpty
 
-	// ErrItemReferenceInvalidPrefix indicates item reference missing 'op://' prefix.
-	ErrItemReferenceInvalidPrefix = errors.New("item reference must start with 'op://'")
+	// ErrReferenceInvalidFormat indicates reference has invalid format.
+	ErrReferenceInvalidFormat = secrets.ErrReferenceInvalidFormat
 
-	// ErrItemReferenceInvalidFormat indicates item reference has invalid format.
-	ErrItemReferenceInvalidFormat = errors.New("invalid item reference format")
+	// ErrReferenceEmptyParts indicates reference has empty required parts.
+	ErrReferenceEmptyParts = secrets.ErrReferenceEmptyParts
 
-	// ErrItemReferenceEmptyParts indicates item reference has empty vault or item.
-	ErrItemReferenceEmptyParts = errors.New("item reference vault and item cannot be empty")
+	// ErrFieldsEmpty indicates no fields requested for retrieval.
+	ErrFieldsEmpty = secrets.ErrFieldsEmpty
 
-	// ErrItemFieldsEmpty indicates no fields requested for item retrieval.
-	ErrItemFieldsEmpty = errors.New("fields list cannot be empty")
-
-	// ErrItemFieldNotFound indicates requested field not found in item.
-	ErrItemFieldNotFound = errors.New("field not found in item")
+	// ErrFieldNotFound indicates requested field not found in secret.
+	ErrFieldNotFound = secrets.ErrFieldNotFound
 )
 
 // Builder errors.

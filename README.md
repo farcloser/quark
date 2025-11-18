@@ -1,6 +1,9 @@
 # Quark
 
-Quark is a declarative container image management tool written in Go, designed for building, syncing, scanning, and auditing container images across multiple platforms and registries.
+Quark is a declarative container image management SDK written in Go, designed for building, syncing, scanning, and
+auditing container images across multiple platforms and registries.
+
+Quark also provides ssh and secret management primitives that may be reused by other related projects, like Hadron.
 
 ## Features
 
@@ -14,6 +17,7 @@ Quark is a declarative container image management tool written in Go, designed f
 - **Infrastructure Agnostic**: No hard-coded dependencies on specific registries or infrastructure
 - **Idempotent Operations**: Digest-based change detection prevents unnecessary work
 - **1Password Integration**: Retrieve credentials securely from 1Password vaults
+- **age integration**
 - **Auto-Installing Tools**: Trivy and Dockle automatically installed on first use
 - **SSH Connection Pooling**: Efficient, secure SSH connections to BuildKit nodes with agent-based authentication
 
