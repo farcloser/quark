@@ -3,6 +3,7 @@ module github.com/farcloser/quark
 go 1.24.3
 
 require (
+	filippo.io/age v1.2.1
 	github.com/carapace-sh/carapace-shlex v1.1.1
 	github.com/distribution/reference v0.6.0
 	github.com/farcloser/godolint v0.0.0-20251113041004-a8f60e7e687b

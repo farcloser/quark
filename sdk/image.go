@@ -148,6 +148,31 @@ func (img *Image) Digest() string {
 	return img.ref.Digest.String()
 }
 
+// String returns the full serialized image reference.
+// Format depends on what components are set:
+//   - With digest: "domain/path:version@digest" or "domain/path@digest"
+//   - Without digest: "domain/path:version" or "domain/path"
+//
+// Examples:
+//   - "ghcr.io/farcloser/dns:v2025@sha256:379991..."
+//   - "docker.io/library/alpine:3.19"
+//   - "ghcr.io/org/image"
+func (img *Image) String() string {
+	result := img.ref.Name()
+
+	// Add tag if present
+	if img.ref.Tag != "" {
+		result += ":" + img.ref.Tag
+	}
+
+	// Add digest if present
+	if img.ref.Digest != "" {
+		result += "@" + img.ref.Digest.String()
+	}
+
+	return result
+}
+
 // tagRef returns the tag reference format: "domain/name:version".
 // Returns error if version is not set.
 func (img *Image) tagRef() (string, error) {

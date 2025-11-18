@@ -94,13 +94,13 @@ func main() {
 	if err != nil {
 		// Check for common error types to provide helpful messages
 		switch {
-		case errors.Is(err, sdk.ErrItemReferenceInvalidPrefix):
+		case errors.Is(err, sdk.ErrReferenceInvalidFormat):
 			log.Fatal().Err(err).Msg("invalid 1Password reference format (must start with 'op://')")
-		case errors.Is(err, sdk.ErrItemFieldNotFound):
+		case errors.Is(err, sdk.ErrFieldNotFound):
 			log.Fatal().
 				Err(err).
 				Msg("required field not found in 1Password item (ensure 'username' and 'password' fields exist)")
-		case errors.Is(err, sdk.ErrItemReferenceEmpty):
+		case errors.Is(err, sdk.ErrReferenceEmpty):
 			log.Fatal().Err(err).Msg("1Password reference cannot be empty")
 		default:
 			// Generic error - likely authentication issue or item not found
