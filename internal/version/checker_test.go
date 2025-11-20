@@ -73,63 +73,8 @@ func TestChecker_CheckVersion_InvalidImageReference(t *testing.T) {
 }
 
 // INTENTION: Invalid image references should fail at parse stage before registry access.
-func TestChecker_GetTagDigest_InvalidImageReference(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		imageRef   string
-		wantErrMsg string
-	}{
-		{
-			name:       "empty image reference",
-			imageRef:   "",
-			wantErrMsg: "failed to parse image reference",
-		},
-		{
-			name:       "invalid characters in reference",
-			imageRef:   "invalid@@@image",
-			wantErrMsg: "failed to parse image reference",
-		},
-		{
-			name:       "malformed digest",
-			imageRef:   "alpine@notadigest",
-			wantErrMsg: "failed to parse image reference",
-		},
-		{
-			name:       "malformed registry domain",
-			imageRef:   ":::invalid/repo:tag",
-			wantErrMsg: "failed to parse image reference",
-		},
-		{
-			name:       "tag with invalid characters",
-			imageRef:   "alpine:invalid@@@tag",
-			wantErrMsg: "failed to parse image reference",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			checker := version.NewChecker("", "", zerolog.Nop())
-			digest, err := checker.GetTagDigest(tt.imageRef)
-
-			if err == nil {
-				t.Fatal("GetTagDigest() error = nil, want error")
-			}
-
-			if digest != "" {
-				t.Errorf("GetTagDigest() digest = %q, want empty string on error", digest)
-			}
-
-			// Verify error message contains expected substring
-			if err.Error() == "" || !contains(err.Error(), tt.wantErrMsg) {
-				t.Errorf("GetTagDigest() error = %q, want error containing %q", err.Error(), tt.wantErrMsg)
-			}
-		})
-	}
-}
+// GetDigest no longer handles parsing - invalid references are caught by Image.TagReference()
+// Parsing validation tests moved to sdk/image_test.go
 
 // INTENTION: Checker creation should accept optional credentials.
 func TestNewChecker(t *testing.T) {

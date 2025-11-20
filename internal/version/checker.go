@@ -243,14 +243,14 @@ func extractVariant(fullVersion string) (version, variant string) {
 	return fullVersion, ""
 }
 
-// GetTagDigest fetches the digest for a specific tag from any OCI registry.
-func (checker *Checker) GetTagDigest(imageRef string) (string, error) {
-	ref, err := name.ParseReference(imageRef)
+// GetDigest fetches the digest for an image reference from the registry.
+func (checker *Checker) GetDigest(imageRef string) (string, error) {
+	repo, err := name.ParseReference(imageRef)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse image reference: %w", err)
+		return "", fmt.Errorf("failed to parse repository: %w", err)
 	}
 
-	desc, err := remote.Get(ref, checker.remoteOptions()...)
+	desc, err := remote.Get(repo, checker.remoteOptions()...)
 	if err != nil {
 		return "", fmt.Errorf("failed to get image descriptor: %w", err)
 	}

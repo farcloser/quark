@@ -15,6 +15,7 @@ type VersionCheck struct {
 	image    *Image
 	registry *Registry
 	log      zerolog.Logger
+	force    bool // if true, digest mismatches are warnings instead of errors
 
 	// Results populated after execution
 	currentVersion  string
@@ -40,6 +41,15 @@ type VersionCheckBuilder struct {
 func (builder *VersionCheckBuilder) Source(image *Image) *VersionCheckBuilder {
 	builder.check.image = image
 	builder.check.registry = builder.plan.getRegistry(image.Domain())
+
+	return builder
+}
+
+// Force enables force mode for digest verification.
+// When enabled, digest mismatches become warnings instead of errors,
+// and the digest is updated with the actual value from the remote.
+func (builder *VersionCheckBuilder) Force(force bool) *VersionCheckBuilder {
+	builder.check.force = force
 
 	return builder
 }
@@ -71,6 +81,17 @@ func (builder *VersionCheckBuilder) Build() (*VersionCheck, error) {
 func (check *VersionCheck) execute(_ context.Context) error {
 	img := check.image
 
+	// Version check requires explicit version (not defaulted "latest")
+	imgVersion := img.Version()
+	if imgVersion == "" {
+		return fmt.Errorf("%w for image %q", ErrVersionCheckExplicitVersionRequired, img.Name())
+	}
+
+	// Don't check for updates on "latest" tag
+	if imgVersion == "latest" {
+		return fmt.Errorf("%w on image %q", ErrVersionCheckLatestNotSupported, img.Name())
+	}
+
 	check.log.Info().
 		Str("image", img.Name()).
 		Str("version", img.Version()).
@@ -85,95 +106,68 @@ func (check *VersionCheck) execute(_ context.Context) error {
 
 	checker := version.NewChecker(username, password, check.log)
 
-	// Use tagRef to query what the tag points to
-	tagReference, err := img.tagRef()
-	if err != nil {
-		return fmt.Errorf("failed to build tag reference: %w", err)
-	}
-
-	// Verify current version digest if provided
-	if img.Digest() != "" {
-		check.log.Debug().
-			Str("expected_digest", img.Digest()).
-			Msg("verifying current version digest")
-
-		actualDigest, err := checker.GetTagDigest(tagReference)
-		if err != nil {
-			return fmt.Errorf("failed to get current version digest: %w", err)
-		}
-
-		if actualDigest != img.Digest() {
-			check.log.Error().
-				Str("expected", img.Digest()).
-				Str("actual", actualDigest).
-				Str("version", img.Version()).
-				Msg("current version digest mismatch")
-
-			return fmt.Errorf(
-				"%w: current version %s points to %s, expected %s",
-				ErrDigestMismatch,
-				tagReference,
-				actualDigest,
-				img.Digest(),
-			)
-		}
-
-		check.log.Info().
-			Str("digest", actualDigest).
-			Msg("current version digest verification passed")
-	} else {
-		// Warn if no digest provided - show actual digest
-		actualDigest, err := checker.GetTagDigest(tagReference)
-		if err != nil {
-			check.log.Warn().
-				Err(err).
-				Str("version", img.Version()).
-				Msg("failed to retrieve current version digest for verification")
-		} else {
-			check.log.Warn().
-				Str("tag", tagReference).
-				Str("digest", actualDigest).
-				Msgf("⚠ WARNING: No digest verification for %s. Add .Digest(\"%s\") to your Image to enable verification", tagReference, actualDigest)
-		}
-	}
-
-	// Check for updates - variant auto-extracted from version
+	// Check for version updates first
 	info, err := checker.CheckVersion(img.Name(), img.Version(), "")
-	if err != nil {
-		check.log.Error().
-			Err(err).
-			Str("image", img.Name()).
-			Str("version", img.Version()).
-			Msg("failed to check version (skipping update check)")
-
-		// Mark as executed with no update available - don't fail the entire plan
-		check.currentVersion = img.Version()
-		check.latestVersion = img.Version()
-		check.latestDigest = img.Digest()
-		check.updateAvailable = false
+	if err == nil && info.UpdateAvailable {
+		// Newer version available - use it
+		check.currentVersion = info.CurrentVersion
+		check.latestVersion = info.LatestVersion
+		check.latestDigest = info.LatestDigest
+		check.updateAvailable = true
 		check.executed = true
+
+		check.log.Warn().
+			Str("current", info.CurrentVersion).
+			Str("latest", info.LatestVersion).
+			Str("digest", info.LatestDigest).
+			Msg("⚠ update available")
 
 		return nil
 	}
 
-	// Store results for later retrieval
-	check.currentVersion = info.CurrentVersion
-	check.latestVersion = info.LatestVersion
-	check.latestDigest = info.LatestDigest
-	check.updateAvailable = info.UpdateAvailable
+	// No newer version - check current version digest
+	actualDigest, err := checker.GetDigest(img.tagRef())
+	if err != nil {
+		return fmt.Errorf("failed to get current version digest: %w", err)
+	}
+
+	expectedDigest := img.Digest()
+	digestMismatch := (expectedDigest != "" && actualDigest != expectedDigest)
+
+	// Fail on digest mismatch unless force mode
+	if digestMismatch && !check.force {
+		check.log.Error().
+			Str("expected", expectedDigest).
+			Str("actual", actualDigest).
+			Str("version", img.Version()).
+			Msg("digest mismatch")
+
+		return fmt.Errorf(
+			"%w: current version %s points to %s, expected %s",
+			ErrDigestMismatch,
+			img.Name(),
+			actualDigest,
+			expectedDigest,
+		)
+	}
+
+	// No version update, set current as latest
+	check.currentVersion = img.Version()
+	check.latestVersion = img.Version()
+	check.latestDigest = actualDigest
+	check.updateAvailable = (check.force && (digestMismatch || expectedDigest == ""))
 	check.executed = true
 
-	if info.UpdateAvailable {
+	if check.updateAvailable {
 		check.log.Warn().
-			Str("image", img.Name()).
-			Str("current", info.CurrentVersion).
-			Str("latest", info.LatestVersion).
-			Str("digest", info.LatestDigest).
-			Msg("⚠ UPDATE AVAILABLE")
+			Str("version", check.currentVersion).
+			Str("digest", check.latestDigest).
+			Msg("⚠ digest update (force mode)")
 	} else {
 		check.log.Info().
-			Str("tag", tagReference).
-			Msg("✓ Up to date")
+			Str("version", check.currentVersion).
+			Str("digest", check.latestDigest).
+			Msg("✓ up to date")
 	}
 
 	return nil

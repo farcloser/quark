@@ -100,10 +100,7 @@ func (sync *Sync) execute(ctx context.Context) error {
 	}
 
 	// Use tagRef for destination (includes domain/name:version)
-	destRef, err := sync.destImage.tagRef()
-	if err != nil {
-		return fmt.Errorf("failed to build destination reference: %w", err)
-	}
+	destRef := sync.destImage.tagRef()
 
 	sync.log.Info().
 		Str("source", sourceRef).

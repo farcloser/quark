@@ -80,6 +80,12 @@ var (
 
 	// ErrVersionCheckVersionRequired indicates version check image must have version specified.
 	ErrVersionCheckVersionRequired = errors.New("version check image must have version specified")
+
+	// ErrVersionCheckExplicitVersionRequired indicates version check requires explicit version tag.
+	ErrVersionCheckExplicitVersionRequired = errors.New("version check requires explicit version tag")
+
+	// ErrVersionCheckLatestNotSupported indicates version check does not support "latest" tag.
+	ErrVersionCheckLatestNotSupported = errors.New("version check not supported for 'latest' tag")
 )
 
 // Image errors.

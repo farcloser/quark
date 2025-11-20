@@ -308,10 +308,7 @@ func (scan *Scan) execute(ctx context.Context) error {
 			return fmt.Errorf("failed to build digest reference: %w", err)
 		}
 	case scan.image.Version() != "":
-		imageRef, err = scan.image.tagRef()
-		if err != nil {
-			return fmt.Errorf("failed to build tag reference: %w", err)
-		}
+		imageRef = scan.image.tagRef()
 	default:
 		imageRef = scan.image.Name()
 	}

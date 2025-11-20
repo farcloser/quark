@@ -174,13 +174,9 @@ func (img *Image) String() string {
 }
 
 // tagRef returns the tag reference format: "domain/name:version".
-// Returns error if version is not set.
-func (img *Image) tagRef() (string, error) {
-	if img.ref.ExplicitTag == "" {
-		return "", fmt.Errorf("%w for image %q", ErrImageVersionRequired, img.ref.Path)
-	}
-
-	return img.ref.Name() + ":" + img.ref.Tag, nil
+// Returns error if no tag is set.
+func (img *Image) tagRef() string {
+	return img.ref.Name() + ":" + img.ref.Tag
 }
 
 // digestRef returns the digest reference format: "domain/name@digest".

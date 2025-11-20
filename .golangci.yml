@@ -113,20 +113,41 @@ linters:
             - $all
           allow:
             - $gostd
+            # Common
             - github.com/rs/zerolog
             - github.com/urfave/cli
             - github.com/farcloser/quark
+            - github.com/joho/godotenv
+            - github.com/opencontainers/go-digest
+            # Private
             - github.com/farcloser/godolint
             - golang.org/x/crypto/ssh
-            - github.com/opencontainers/go-digest
             - github.com/kevinburke/ssh_config
             - github.com/carapace-sh/carapace-shlex
             - github.com/google/go-containerregistry
-            - github.com/joho/godotenv
             - github.com/distribution/reference
-            - github.com/pkg/sft
+            - github.com/pkg/sftp
             - gotest.tools/v3/assert
             - filippo.io/age
+        no-ssh-out:
+          files:
+            - $all
+            - "!**/ssh/**"
+          deny:
+            - pkg: golang.org/x/crypto/ssh
+            - pkg: github.com/kevinburke/ssh_config
+            - pkg: github.com/pkg/sftp
+        no-internals-in-sdk:
+          files:
+            - $all
+            - "!**/internal/**"
+          deny:
+            - pkg: github.com/farcloser/godolint
+            - pkg: github.com/carapace-sh/carapace-shlex
+            - pkg: github.com/google/go-containerregistry
+            - pkg: github.com/distribution/reference
+            - pkg: gotest.tools/v3/assert
+            - pkg: filippo.io/age
 
     staticcheck:
       checks:

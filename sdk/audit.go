@@ -156,12 +156,7 @@ func (auditJob *Audit) execute(ctx context.Context) error {
 	var imageRef string
 
 	if auditJob.image != nil {
-		ref, err := auditJob.image.tagRef()
-		if err != nil {
-			return fmt.Errorf("failed to build image reference: %w", err)
-		}
-
-		imageRef = ref
+		imageRef = auditJob.image.tagRef()
 	}
 
 	auditJob.log.Info().

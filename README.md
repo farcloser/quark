@@ -504,7 +504,7 @@ if err != nil {
 // Use retrieved credentials
 plan.Registry(credentials["domain"]).
     Username(credentials["username"]).
-    Password(credentials["password"]).
+    Password(credentials["token"]).
     Build()
 
 // Retrieve document (like SSH key or kubeconfig)

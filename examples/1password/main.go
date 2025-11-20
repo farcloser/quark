@@ -111,7 +111,7 @@ func main() {
 	}
 
 	username := credentials["username"]
-	password := credentials["password"]
+	password := credentials["token"]
 
 	log.Info().
 		Str("username", username).
