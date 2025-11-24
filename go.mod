@@ -6,7 +6,7 @@ require (
 	filippo.io/age v1.2.1
 	github.com/carapace-sh/carapace-shlex v1.1.1
 	github.com/distribution/reference v0.6.0
-	github.com/farcloser/godolint v0.0.0-20251113041004-a8f60e7e687b
+	github.com/farcloser/godolint v0.1.0
 	github.com/google/go-containerregistry v0.20.6
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.4.0
@@ -31,7 +31,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
-	github.com/moby/buildkit v0.26.0 // indirect
+	github.com/moby/buildkit v0.26.1 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
