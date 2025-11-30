@@ -4,114 +4,64 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/opencontainers/go-digest"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/farcloser/quark/internal/reference"
 )
 
+// ImageOpts contains configuration options for creating an image reference.
+type ImageOpts struct {
+	Name    string `json:"name"`              // Required - image name (e.g., "alpine", "org/image", "ghcr.io/foo/bar")
+	Domain  string `json:"domain,omitempty"`  // Optional - registry domain (default: docker.io)
+	Version string `json:"version,omitempty"` // Optional - image tag/version
+	Digest  string `json:"digest,omitempty"`  // Optional - image digest for verification
+}
+
 // Image represents a container image reference with optional version and digest.
 type Image struct {
 	ref *reference.ImageReference
 	log zerolog.Logger
-
-	// Builder state (fields set before Build() is called)
-	builderName    string
-	builderDomain  string
-	builderVersion string
-	builderDigest  string
 }
 
-// ImageBuilder builds an Image.
-type ImageBuilder struct {
-	image *Image
-	built bool
-}
-
-// NewImage creates a new Image builder with the specified name.
-// Name can be a short name, repository path, or fully qualified reference:
-//   - Short: "alpine", "debian" (normalized to docker.io/library/alpine, docker.io/library/debian)
-//   - Repository: "timberio/vector", "org/image" (normalized to docker.io/timberio/vector, docker.io/org/image)
-//   - Fully qualified: "ghcr.io/foo/bar:v1.0", "docker.io/library/alpine:3.19"
-//
-// You can also use Domain(), Version(), and Digest() methods to set components explicitly.
-func NewImage(name string) *ImageBuilder {
-	return &ImageBuilder{
-		image: &Image{
-			builderName: name,
-			log:         log.Logger.With().Str("image", name).Logger(),
-		},
-	}
-}
-
-// Domain sets the registry domain for the image.
-// Empty string will be normalized to "docker.io" (Docker Hub).
-func (builder *ImageBuilder) Domain(domain string) *ImageBuilder {
-	builder.image.builderDomain = domain
-
-	return builder
-}
-
-// Version sets the image version/tag.
-// Can include variant suffix (e.g., "0.50.0-distroless-static").
-func (builder *ImageBuilder) Version(version string) *ImageBuilder {
-	builder.image.builderVersion = version
-
-	return builder
-}
-
-// Digest sets the image digest for verification and secure operations.
-func (builder *ImageBuilder) Digest(digest string) *ImageBuilder {
-	builder.image.builderDigest = digest
-
-	return builder
-}
-
-// Build validates and returns the Image.
-// The builder becomes unusable after Build() is called.
-// Create a new builder for each operation.
-func (builder *ImageBuilder) Build() (*Image, error) {
-	if builder.built {
-		return nil, ErrBuilderAlreadyUsed
-	}
-
-	builder.built = true
-
-	name := strings.TrimSpace(builder.image.builderName)
+// NewImage creates a new Image from the provided arguments.
+func NewImage(args *ImageOpts) (*Image, error) {
+	name := strings.TrimSpace(args.Name)
 	if name == "" {
 		return nil, ErrImageNameRequired
 	}
 
-	// Construct reference string from builder fields
+	// Construct reference string from args
 	refString := ""
-	if builder.image.builderDomain != "" {
-		refString = builder.image.builderDomain + "/"
+	if args.Domain != "" {
+		refString = args.Domain + "/"
 	}
 
 	refString += name
 
-	if builder.image.builderVersion != "" {
-		refString += ":" + builder.image.builderVersion
+	if args.Version != "" {
+		refString += ":" + args.Version
 	}
 
-	if builder.image.builderDigest != "" {
-		refString += "@" + builder.image.builderDigest
+	if args.Digest != "" {
+		refString += "@" + args.Digest
 	}
 
 	// Parse using reference package
 	ref, err := reference.Parse(refString)
 	if err != nil {
-		// If we have a digest and parsing failed, it's likely a digest error
-		if builder.image.builderDigest != "" {
+		if args.Digest != "" {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidImageDigest, err)
 		}
 
 		return nil, fmt.Errorf("invalid image reference: %w", err)
 	}
 
-	builder.image.ref = ref
-
-	return builder.image, nil
+	return &Image{
+		ref: ref,
+		log: log.Logger.With().Str("image", name).Logger(),
+	}, nil
 }
 
 // Name returns the image name in familiar form (user-facing).
@@ -146,6 +96,24 @@ func (img *Image) Digest() string {
 	}
 
 	return img.ref.Digest.String()
+}
+
+// SetVersion sets the image version/tag.
+func (img *Image) SetVersion(version string) {
+	img.ref.Tag = version
+	img.ref.ExplicitTag = version
+}
+
+// SetDigest sets the image digest.
+func (img *Image) SetDigest(digestStr string) error {
+	parsed, err := digest.Parse(digestStr)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidImageDigest, err)
+	}
+
+	img.ref.Digest = parsed
+
+	return nil
 }
 
 // String returns the full serialized image reference.

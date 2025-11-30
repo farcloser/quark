@@ -19,17 +19,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/farcloser/quark/filesystem"
-)
-
-var (
-	errNotConnected        = errors.New("not connected")
-	errHostKeyMismatch     = errors.New("host key verification failed: key mismatch (possible MITM attack)")
-	errHostNotInKnownHosts = errors.New("host key verification failed: host not found in known_hosts")
-	errNoSSHAgent          = errors.New("SSH agent not available: ensure SSH_AUTH_SOCK is set and ssh-agent is running")
-	errInvalidPort         = errors.New("invalid port in SSH config")
-	errPassphraseKey       = errors.New("SSH key is passphrase-protected (use unencrypted key or SSH agent)")
-	errIdentityKeyNotFound = errors.New("identity file key not found in SSH agent")
+	"github.com/farcloser/quark/sdk/filesystem"
 )
 
 const (
@@ -41,6 +31,7 @@ const (
 type Connection interface {
 	Execute(command string) (stdout, stderr string, err error)
 	ExecuteStreaming(command string, stdout, stderr io.Writer) error
+	ExecuteWithStdin(command string, stdin []byte) error
 	UploadFile(localPath, remotePath string) error
 	UploadData(data []byte, remotePath string) error
 }
@@ -326,13 +317,13 @@ func (c *client) close() error {
 // Execute runs a command on the remote host and returns stdout, stderr, and error.
 func (c *client) Execute(command string) (stdout, stderr string, err error) {
 	if c.sshClient == nil {
-		return "", "", errNotConnected
+		return "", "", ErrNotConnected
 	}
 
 	// Create a new session for this command
 	session, err := c.sshClient.NewSession()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create session: %w", err)
+		return "", "", wrapOpenChannelError(err)
 	}
 
 	defer func() { _ = session.Close() }()
@@ -372,13 +363,13 @@ func (c *client) Execute(command string) (stdout, stderr string, err error) {
 // ExecuteStreaming runs a command on the remote host and streams stdout/stderr to the provided writers.
 func (c *client) ExecuteStreaming(command string, stdout, stderr io.Writer) error {
 	if c.sshClient == nil {
-		return errNotConnected
+		return ErrNotConnected
 	}
 
 	// Create a new session for this command
 	session, err := c.sshClient.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		return wrapOpenChannelError(err)
 	}
 
 	defer func() { _ = session.Close() }()
@@ -393,6 +384,55 @@ func (c *client) ExecuteStreaming(command string, stdout, stderr io.Writer) erro
 
 	// Run command (blocks until completion)
 	if err := session.Run(command); err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+
+	return nil
+}
+
+// ExecuteWithStdin executes a command with data piped to stdin.
+// The data is sent directly through the SSH channel and never touches the filesystem.
+// This is useful for writing to FIFOs or other scenarios where data must not be written to disk.
+func (c *client) ExecuteWithStdin(command string, stdin []byte) error {
+	if c.sshClient == nil {
+		return ErrNotConnected
+	}
+
+	// Create a new session for this command
+	session, err := c.sshClient.NewSession()
+	if err != nil {
+		return wrapOpenChannelError(err)
+	}
+
+	defer func() { _ = session.Close() }()
+
+	// Get stdin pipe
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+
+	// Prepend /usr/local/bin to PATH to include common binary locations
+	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
+	command = "PATH=/usr/local/bin:$PATH " + command
+
+	// Start command
+	if err := session.Start(command); err != nil {
+		return fmt.Errorf("failed to start command: %w", err)
+	}
+
+	// Write data to stdin
+	if _, err := stdinPipe.Write(stdin); err != nil {
+		return fmt.Errorf("failed to write to stdin: %w", err)
+	}
+
+	// Close stdin to signal EOF
+	if err := stdinPipe.Close(); err != nil {
+		return fmt.Errorf("failed to close stdin: %w", err)
+	}
+
+	// Wait for command to complete
+	if err := session.Wait(); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
 
@@ -427,7 +467,7 @@ func (c *client) parseSSHKey() (ssh.Signer, error) {
 		// Check if this is a passphrase-protected key
 		var passphraseErr *ssh.PassphraseMissingError
 		if errors.As(err, &passphraseErr) {
-			return nil, errPassphraseKey
+			return nil, ErrPassphraseKey
 		}
 
 		return nil, fmt.Errorf("invalid SSH key format: %w", err)
@@ -442,13 +482,13 @@ func (c *client) getSSHAgentAuth() (ssh.AuthMethod, error) {
 	// Get SSH_AUTH_SOCK environment variable
 	socket := os.Getenv("SSH_AUTH_SOCK")
 	if socket == "" {
-		return nil, errNoSSHAgent
+		return nil, ErrNoSSHAgent
 	}
 
 	// Connect to SSH agent
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to connect to agent socket: %w", errNoSSHAgent, err)
+		return nil, fmt.Errorf("%w: failed to connect to agent socket: %w", ErrNoSSHAgent, err)
 	}
 
 	// Store connection for cleanup in Close()
@@ -472,7 +512,7 @@ func (c *client) getSSHAgentAuth() (ssh.AuthMethod, error) {
 				}
 			}
 
-			return nil, errIdentityKeyNotFound
+			return nil, ErrIdentityKeyNotFound
 		}), nil
 	}
 
@@ -503,7 +543,7 @@ func (c *client) fingerprintCallback() ssh.HostKeyCallback {
 		if actualFingerprint != c.sshFingerprint {
 			return fmt.Errorf(
 				"%w: expected %s, got %s for %s",
-				errHostKeyMismatch,
+				ErrHostKeyMismatch,
 				c.sshFingerprint,
 				actualFingerprint,
 				hostname,
@@ -562,7 +602,7 @@ func (c *client) knownHostsCallback() (ssh.HostKeyCallback, error) {
 			if errors.As(err, &keyErr) && len(keyErr.Want) > 0 {
 				return fmt.Errorf(
 					"%w for %s. If you trust this host, remove the old key from %s and retry",
-					errHostKeyMismatch,
+					ErrHostKeyMismatch,
 					hostname,
 					knownHostsPath,
 				)
@@ -572,7 +612,7 @@ func (c *client) knownHostsCallback() (ssh.HostKeyCallback, error) {
 			if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
 				return fmt.Errorf(
 					"%w: %s. To add this host, run: ssh-keyscan -H %s >> %s",
-					errHostNotInKnownHosts,
+					ErrHostNotInKnownHosts,
 					hostname,
 					c.hostname,
 					knownHostsPath,
@@ -595,10 +635,34 @@ func (c *client) String() string {
 	return c.endpoint
 }
 
+func (c *client) getRemoteFile(remotePath string) (*sftp.File, error) {
+	if c.sshClient == nil {
+		return nil, ErrNotConnected
+	}
+
+	// Create remote file using SFTP (truncate if exists)
+	remoteFile, err := c.sftpClient.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create remote file: %w", err)
+	}
+
+	// SECURITY: Set restrictive permissions IMMEDIATELY after creation, BEFORE writing data.
+	// pkg/sftp's OpenFile doesn't support setting mode at creation time, so we minimize
+	// the race window by chmod'ing before any sensitive data is written.
+	if err := c.sftpClient.Chmod(remotePath, filesystem.FilePermissionsPrivate); err != nil {
+		_ = remoteFile.Close()
+
+		return nil, fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	return remoteFile, nil
+}
+
 // UploadFile uploads a local file to the remote host using SFTP protocol.
 func (c *client) UploadFile(localPath, remotePath string) error {
-	if c.sshClient == nil {
-		return errNotConnected
+	remoteFile, err := c.getRemoteFile(remotePath)
+	if err != nil {
+		return err
 	}
 
 	// Read local file
@@ -609,12 +673,6 @@ func (c *client) UploadFile(localPath, remotePath string) error {
 	}
 
 	defer func() { _ = localFile.Close() }()
-
-	// Create remote file using SFTP
-	remoteFile, err := c.sftpClient.Create(remotePath)
-	if err != nil {
-		return fmt.Errorf("failed to create remote file: %w", err)
-	}
 
 	// Copy content from local to remote
 	if _, err := io.Copy(remoteFile, localFile); err != nil {
@@ -628,28 +686,19 @@ func (c *client) UploadFile(localPath, remotePath string) error {
 		return fmt.Errorf("failed to close remote file: %w", err)
 	}
 
-	// Set file permissions to 0600 (owner read/write only)
-	if err := c.sftpClient.Chmod(remotePath, filesystem.FilePermissionsPrivate); err != nil {
-		return fmt.Errorf("failed to set file permissions: %w", err)
-	}
-
 	return nil
 }
 
 // UploadData uploads raw data as a file to the remote host.
 // Data is uploaded directly without creating a local temporary file.
+// Permissions are set to 0600 immediately after file creation to minimize the race window.
 func (c *client) UploadData(data []byte, remotePath string) error {
-	if c.sshClient == nil {
-		return errNotConnected
-	}
-
-	// Create remote file using SFTP (truncate if exists)
-	remoteFile, err := c.sftpClient.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	remoteFile, err := c.getRemoteFile(remotePath)
 	if err != nil {
-		return fmt.Errorf("failed to create remote file: %w", err)
+		return err
 	}
 
-	// Write data
+	// Write data (file now has 0600 permissions)
 	if _, err := remoteFile.Write(data); err != nil {
 		_ = remoteFile.Close()
 
@@ -659,11 +708,6 @@ func (c *client) UploadData(data []byte, remotePath string) error {
 	// Close remote file
 	if err := remoteFile.Close(); err != nil {
 		return fmt.Errorf("failed to close remote file: %w", err)
-	}
-
-	// Set file permissions to 0600 (owner read/write only)
-	if err := c.sftpClient.Chmod(remotePath, filesystem.FilePermissionsPrivate); err != nil {
-		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 
 	return nil

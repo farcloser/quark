@@ -9,8 +9,20 @@ import (
 	"github.com/farcloser/quark/internal/version"
 )
 
-// VersionCheck represents a version check operation.
-type VersionCheck struct {
+// VersionCheckResult contains the result of a version check operation.
+type VersionCheckResult struct {
+	// CurrentVersion is the version that was checked.
+	CurrentVersion string
+	// LatestVersion is the latest available version.
+	LatestVersion string
+	// LatestDigest is the digest of the latest version.
+	LatestDigest string
+	// UpdateAvailable indicates whether an update is available.
+	UpdateAvailable bool
+}
+
+// versionCheckOp represents a version check operation.
+type versionCheckOp struct {
 	opName   string
 	image    *Image
 	registry *Registry
@@ -22,101 +34,35 @@ type VersionCheck struct {
 	latestVersion   string
 	latestDigest    string
 	updateAvailable bool
-	executed        bool
 }
 
-// VersionCheckBuilder builds a VersionCheck.
-type VersionCheckBuilder struct {
-	plan  *Plan
-	check *VersionCheck
-	built bool
-}
+func (v *versionCheckOp) execute(_ context.Context) error {
+	img := v.image
 
-// Source sets the source image.
-// The image must have a version specified. Digest is optional:
-// - If digest is provided: verifies the version tag points to expected digest (fails on mismatch)
-// - If digest is not provided: shows warning with actual digest
-// Registry credentials are looked up from the plan's registry collection using the image domain.
-// If no registry is found, anonymous access will be used (public repos only).
-func (builder *VersionCheckBuilder) Source(image *Image) *VersionCheckBuilder {
-	builder.check.image = image
-	builder.check.registry = builder.plan.getRegistry(image.Domain())
-
-	return builder
-}
-
-// Force enables force mode for digest verification.
-// When enabled, digest mismatches become warnings instead of errors,
-// and the digest is updated with the actual value from the remote.
-func (builder *VersionCheckBuilder) Force(force bool) *VersionCheckBuilder {
-	builder.check.force = force
-
-	return builder
-}
-
-// Build validates and adds the version check to the plan.
-// The builder becomes unusable after Build() is called.
-// Create a new builder for each operation.
-func (builder *VersionCheckBuilder) Build() (*VersionCheck, error) {
-	if builder.built {
-		return nil, ErrBuilderAlreadyUsed
-	}
-
-	builder.built = true
-
-	if builder.check.image == nil {
-		return nil, ErrVersionCheckImageRequired
-	}
-
-	if builder.check.image.Version() == "" {
-		return nil, ErrVersionCheckVersionRequired
-	}
-
-	builder.plan.versionChecks = append(builder.plan.versionChecks, builder.check)
-	builder.plan.operations = append(builder.plan.operations, builder.check)
-
-	return builder.check, nil
-}
-
-func (check *VersionCheck) execute(_ context.Context) error {
-	img := check.image
-
-	// Version check requires explicit version (not defaulted "latest")
-	imgVersion := img.Version()
-	if imgVersion == "" {
-		return fmt.Errorf("%w for image %q", ErrVersionCheckExplicitVersionRequired, img.Name())
-	}
-
-	// Don't check for updates on "latest" tag
-	if imgVersion == "latest" {
-		return fmt.Errorf("%w on image %q", ErrVersionCheckLatestNotSupported, img.Name())
-	}
-
-	check.log.Info().
+	v.log.Info().
 		Str("image", img.Name()).
 		Str("version", img.Version()).
 		Msg("checking for version updates")
 
 	// Create version checker with optional registry credentials
 	var username, password string
-	if check.registry != nil {
-		username = check.registry.username
-		password = check.registry.password
+	if v.registry != nil {
+		username = v.registry.username
+		password = v.registry.token
 	}
 
-	checker := version.NewChecker(username, password, check.log)
+	checker := version.NewChecker(username, password, v.log)
 
 	// Check for version updates first
 	info, err := checker.CheckVersion(img.Name(), img.Version(), "")
 	if err == nil && info.UpdateAvailable {
 		// Newer version available - use it
-		check.currentVersion = info.CurrentVersion
-		check.latestVersion = info.LatestVersion
-		check.latestDigest = info.LatestDigest
-		check.updateAvailable = true
-		check.executed = true
+		v.currentVersion = info.CurrentVersion
+		v.latestVersion = info.LatestVersion
+		v.latestDigest = info.LatestDigest
+		v.updateAvailable = true
 
-		check.log.Warn().
+		v.log.Warn().
 			Str("current", info.CurrentVersion).
 			Str("latest", info.LatestVersion).
 			Str("digest", info.LatestDigest).
@@ -135,8 +81,8 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	digestMismatch := (expectedDigest != "" && actualDigest != expectedDigest)
 
 	// Fail on digest mismatch unless force mode
-	if digestMismatch && !check.force {
-		check.log.Error().
+	if digestMismatch && !v.force {
+		v.log.Error().
 			Str("expected", expectedDigest).
 			Str("actual", actualDigest).
 			Str("version", img.Version()).
@@ -152,57 +98,27 @@ func (check *VersionCheck) execute(_ context.Context) error {
 	}
 
 	// No version update, set current as latest
-	check.currentVersion = img.Version()
-	check.latestVersion = img.Version()
-	check.latestDigest = actualDigest
-	check.updateAvailable = (check.force && (digestMismatch || expectedDigest == ""))
-	check.executed = true
+	v.currentVersion = img.Version()
+	v.latestVersion = img.Version()
+	v.latestDigest = actualDigest
+	v.updateAvailable = (v.force && (digestMismatch || expectedDigest == ""))
 
-	if check.updateAvailable {
-		check.log.Warn().
-			Str("version", check.currentVersion).
-			Str("digest", check.latestDigest).
+	if v.updateAvailable {
+		v.log.Warn().
+			Str("version", v.currentVersion).
+			Str("digest", v.latestDigest).
 			Msg("⚠ digest update (force mode)")
 	} else {
-		check.log.Info().
-			Str("version", check.currentVersion).
-			Str("digest", check.latestDigest).
+		v.log.Info().
+			Str("version", v.currentVersion).
+			Str("digest", v.latestDigest).
 			Msg("✓ up to date")
 	}
 
 	return nil
 }
 
-// CurrentVersion returns the current version that was checked.
-// Only valid after plan execution.
-func (check *VersionCheck) CurrentVersion() string {
-	return check.currentVersion
-}
-
-// LatestVersion returns the latest available version.
-// Only valid after plan execution.
-func (check *VersionCheck) LatestVersion() string {
-	return check.latestVersion
-}
-
-// LatestDigest returns the digest of the latest version.
-// Only valid after plan execution.
-func (check *VersionCheck) LatestDigest() string {
-	return check.latestDigest
-}
-
-// UpdateAvailable returns whether an update is available.
-// Only valid after plan execution.
-func (check *VersionCheck) UpdateAvailable() bool {
-	return check.updateAvailable
-}
-
-// Executed returns whether the version check has been executed.
-func (check *VersionCheck) Executed() bool {
-	return check.executed
-}
-
 // operationName returns the version check operation name (implements operation interface).
-func (check *VersionCheck) operationName() string {
-	return check.opName
+func (v *versionCheckOp) operationName() string {
+	return v.opName
 }

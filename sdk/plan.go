@@ -2,10 +2,14 @@ package sdk
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"github.com/farcloser/quark/dag"
+	"github.com/farcloser/quark/internal/registry"
 	"github.com/farcloser/quark/ssh"
 )
 
@@ -17,21 +21,21 @@ type operation interface {
 }
 
 // Plan represents a declarative container image management plan.
+// Operations are organized in a DAG for parallel execution of independent operations.
 type Plan struct {
 	name string
 	log  zerolog.Logger
 
 	// Resources
-	registries    map[string]*Registry // keyed by normalized domain
-	buildNodes    []*BuildNode
-	syncs         []*Sync
-	builds        []*Build
-	scans         []*Scan
-	audits        []*Audit
-	versionChecks []*VersionCheck
+	registries map[string]*Registry // keyed by normalized domain
+	buildNodes []*BuildNode
 
-	// Operations in execution order (internal)
-	operations []operation
+	// Operation DAG for dependency-based parallel execution
+	graph   *dag.Graph[*operationWrapper]
+	nodeSeq atomic.Uint64
+
+	// SSH pool shared across Build operations
+	sshPool *ssh.Pool
 }
 
 // normalizeDomain normalizes a registry domain.
@@ -159,124 +163,260 @@ func NewPlan(name string) *Plan {
 		name:       name,
 		log:        log.Logger.With().Str("plan", name).Logger(),
 		registries: make(map[string]*Registry),
+		graph:      dag.NewGraph[*operationWrapper](),
 	}
 }
 
-// Registry creates a new Registry builder.
-func (plan *Plan) Registry(host string) *RegistryBuilder {
-	return &RegistryBuilder{
-		plan: plan,
-		registry: &Registry{
-			host: host,
-			log:  plan.log.With().Str("registry", host).Logger(),
-		},
-	}
+// nextNodeID generates a unique node ID for the DAG.
+func (plan *Plan) nextNodeID(prefix string) string {
+	seq := plan.nodeSeq.Add(1)
+
+	return fmt.Sprintf("%s-%d", prefix, seq)
 }
 
-// BuildNode creates a new BuildNode builder.
-func (plan *Plan) BuildNode(name string) *BuildNodeBuilder {
-	return &BuildNodeBuilder{
-		plan: plan,
-		node: &BuildNode{
-			name: name,
-			log:  plan.log.With().Str("buildnode", name).Logger(),
-		},
-	}
+// AddRegistry attaches an existing registry to the plan.
+// The registry's host is used as the key for credential lookup during operations.
+func (plan *Plan) AddRegistry(reg *Registry) {
+	plan.registries[reg.domain] = reg
 }
 
-// Sync creates a new Sync builder.
-func (plan *Plan) Sync(name string) *SyncBuilder {
-	return &SyncBuilder{
-		plan: plan,
-		sync: &Sync{
-			opName: name,
-			log:    plan.log.With().Str("sync", name).Logger(),
-		},
-	}
+// AddBuildNode attaches an existing build node to the plan.
+func (plan *Plan) AddBuildNode(node *BuildNode) {
+	plan.buildNodes = append(plan.buildNodes, node)
 }
 
-// Build creates a new Build builder.
-func (plan *Plan) Build(name string) *BuildBuilder {
-	return &BuildBuilder{
-		plan: plan,
-		build: &Build{
-			opName: name,
-			log:    plan.log.With().Str("build", name).Logger(),
-		},
+// GetDigest returns the digest for an image from its registry.
+// The registry credentials are automatically looked up by image domain.
+func (plan *Plan) GetDigest(ctx context.Context, image *Image) (string, error) {
+	reg := plan.getRegistry(image.Domain())
+
+	var username, token string
+	if reg != nil {
+		username = reg.username
+		token = reg.token
 	}
+
+	client := registry.NewClient(image.Domain(), username, token, plan.log)
+
+	//nolint:wrapcheck
+	return client.GetDigest(ctx, image.tagRef())
 }
 
-// Scan creates a new Scan builder.
-func (plan *Plan) Scan(name string) *ScanBuilder {
-	return &ScanBuilder{
-		plan: plan,
-		scan: &Scan{
-			opName: name,
-			log:    plan.log.With().Str("scan", name).Logger(),
-		},
+// ListTags returns all tags for an image repository.
+// The registry credentials are automatically looked up by image domain.
+func (plan *Plan) ListTags(ctx context.Context, image *Image) ([]string, error) {
+	reg := plan.getRegistry(image.Domain())
+
+	var username, token string
+	if reg != nil {
+		username = reg.username
+		token = reg.token
 	}
+
+	client := registry.NewClient(image.Domain(), username, token, plan.log)
+	repository := image.Domain() + "/" + image.Path()
+
+	//nolint:wrapcheck
+	return client.ListTags(ctx, repository)
 }
 
-// Audit creates a new Audit builder.
-func (plan *Plan) Audit(name string) *AuditBuilder {
-	return &AuditBuilder{
-		plan: plan,
-		audit: &Audit{
-			opName: name,
-			log:    plan.log.With().Str("audit", name).Logger(),
-		},
+// Sync creates a sync operation and registers it with the plan.
+// Returns a handle for chaining additional operations.
+func (plan *Plan) Sync(args *SyncArgs) (*Handle, error) {
+	if args.Source == nil {
+		return nil, ErrSyncSourceRequired
 	}
+
+	if args.Source.Digest() == "" {
+		return nil, ErrSyncSourceDigestRequired
+	}
+
+	if args.Destination == nil {
+		return nil, ErrSyncDestinationRequired
+	}
+
+	platforms := args.Platforms
+	if len(platforms) == 0 {
+		platforms = []Platform{PlatformAMD64, PlatformARM64}
+	}
+
+	syncOperation := &syncOp{
+		opName:         args.Description,
+		sourceImage:    args.Source,
+		sourceRegistry: plan.getRegistry(args.Source.Domain()),
+		destImage:      args.Destination,
+		destRegistry:   plan.getRegistry(args.Destination.Domain()),
+		platforms:      platforms,
+		log:            plan.log.With().Str("sync", args.Description).Logger(),
+	}
+
+	wrapper := &operationWrapper{op: syncOperation}
+	node := dag.NewNode(plan.nextNodeID("sync"), wrapper)
+	plan.graph.Add(node)
+
+	return &Handle{plan: plan, node: node, op: syncOperation}, nil
 }
 
-// VersionCheck creates a new VersionCheck builder.
-func (plan *Plan) VersionCheck(name string) *VersionCheckBuilder {
-	return &VersionCheckBuilder{
-		plan: plan,
-		check: &VersionCheck{
-			opName: name,
-			log:    plan.log.With().Str("version_check", name).Logger(),
-		},
+// Build creates a build operation and registers it with the plan.
+// Returns a handle for chaining additional operations.
+func (plan *Plan) Build(args *BuildArgs) (*Handle, error) {
+	if args.Context == "" {
+		return nil, ErrBuildContextRequired
 	}
+
+	if len(args.Nodes) == 0 {
+		return nil, ErrBuildNodeRequired
+	}
+
+	if args.Tag == "" {
+		return nil, ErrBuildTagRequired
+	}
+
+	dockerfile := args.Dockerfile
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+
+	buildOp := &build{
+		opName:     args.Name,
+		context:    args.Context,
+		dockerfile: dockerfile,
+		nodes:      args.Nodes,
+		tag:        args.Tag,
+		timeout:    args.Timeout,
+		log:        plan.log.With().Str("build", args.Name).Logger(),
+	}
+
+	wrapper := &operationWrapper{op: buildOp}
+	node := dag.NewNode(plan.nextNodeID("build"), wrapper)
+	plan.graph.Add(node)
+
+	return &Handle{plan: plan, node: node, op: buildOp}, nil
 }
 
-// executor implements plan execution logic.
-type executor struct {
-	plan    *Plan
-	sshPool *ssh.Pool
+// Scan creates a scan operation and registers it with the plan.
+// Returns a handle for chaining additional operations.
+func (plan *Plan) Scan(args *ScanArgs) (*Handle, error) {
+	if args.Source == nil {
+		return nil, ErrScanImageRequired
+	}
+
+	severityChecks := args.SeverityChecks
+	if len(severityChecks) == 0 {
+		severityChecks = []ScanSeverityCheck{
+			{Threshold: SeverityHigh, Action: ActionError},
+			{Threshold: SeverityCritical, Action: ActionError},
+		}
+	}
+
+	format := args.Format
+	if format == (ScanFormat{}) {
+		format = FormatTable
+	}
+
+	scanOperation := &scanOp{
+		opName:         args.Description,
+		image:          args.Source,
+		registry:       plan.getRegistry(args.Source.Domain()),
+		severityChecks: severityChecks,
+		format:         format,
+		timeout:        args.Timeout,
+		log:            plan.log.With().Str("scan", args.Description).Logger(),
+	}
+
+	wrapper := &operationWrapper{op: scanOperation}
+	node := dag.NewNode(plan.nextNodeID("scan"), wrapper)
+	plan.graph.Add(node)
+
+	return &Handle{plan: plan, node: node, op: scanOperation}, nil
 }
 
-// newExecutor creates a new plan executor.
-func newExecutor(plan *Plan) *executor {
-	sshPool := ssh.NewPool(plan.log)
-
-	return &executor{
-		plan:    plan,
-		sshPool: sshPool,
+// Audit creates an audit operation and registers it with the plan.
+// Returns a handle for chaining additional operations.
+func (plan *Plan) Audit(args *AuditArgs) (*Handle, error) {
+	if args.Dockerfile == "" && args.Source == nil {
+		return nil, ErrAuditSourceRequired
 	}
+
+	ruleSet := args.RuleSet
+	if ruleSet == (AuditRuleSet{}) {
+		ruleSet = RuleSetStrict
+	}
+
+	auditOperation := &auditOp{
+		opName:       args.Description,
+		dockerfile:   args.Dockerfile,
+		image:        args.Source,
+		ruleSet:      ruleSet,
+		ignoreChecks: args.IgnoreChecks,
+		timeout:      args.Timeout,
+		log:          plan.log.With().Str("audit", args.Description).Logger(),
+	}
+
+	if args.Source != nil {
+		auditOperation.registry = plan.getRegistry(args.Source.Domain())
+	}
+
+	wrapper := &operationWrapper{op: auditOperation}
+	node := dag.NewNode(plan.nextNodeID("audit"), wrapper)
+	plan.graph.Add(node)
+
+	return &Handle{plan: plan, node: node, op: auditOperation}, nil
+}
+
+// CheckVersion creates a version check operation and registers it with the plan.
+// Returns a handle for chaining additional operations.
+func (plan *Plan) CheckVersion(name string, source *Image, force bool) (*Handle, error) {
+	if source == nil {
+		return nil, ErrVersionCheckImageRequired
+	}
+
+	version := source.Version()
+	if version == "" {
+		return nil, ErrVersionCheckVersionRequired
+	}
+
+	if version == "latest" {
+		return nil, ErrVersionCheckLatestNotSupported
+	}
+
+	checkOperation := &versionCheckOp{
+		opName:   name,
+		image:    source,
+		registry: plan.getRegistry(source.Domain()),
+		force:    force,
+		log:      plan.log.With().Str("version_check", name).Logger(),
+	}
+
+	wrapper := &operationWrapper{op: checkOperation}
+	node := dag.NewNode(plan.nextNodeID("version_check"), wrapper)
+	plan.graph.Add(node)
+
+	return &Handle{plan: plan, node: node, op: checkOperation}, nil
 }
 
 // Execute runs the plan with the given context.
+// Operations are executed in parallel where dependencies allow.
 func (plan *Plan) Execute(ctx context.Context) error {
 	plan.log.Info().Msg("executing plan")
 
-	// Create executor with SSH pool
-	exec := newExecutor(plan)
+	// Initialize SSH pool for Build operations
+	plan.sshPool = ssh.NewPool(plan.log)
 	defer func() {
-		if err := exec.sshPool.CloseAll(); err != nil {
+		if err := plan.sshPool.CloseAll(); err != nil {
 			plan.log.Warn().Err(err).Msg("failed to close SSH connections")
 		}
 	}()
 
-	// Set sshPool for all Build operations
-	for _, build := range plan.builds {
-		build.sshPool = exec.sshPool
+	// Set SSH pool and context on all operation wrappers before execution
+	for _, node := range plan.graph.Nodes() {
+		wrapper := node.Executable()
+		wrapper.plan = plan
 	}
 
-	// Execute all operations in the order they were added
-	for _, op := range plan.operations {
-		if err := op.execute(ctx); err != nil {
-			return err
-		}
+	// Execute the DAG (handles parallelism and dependencies)
+	if err := plan.graph.Execute(ctx); err != nil {
+		return fmt.Errorf("plan execution failed: %w", err)
 	}
 
 	plan.log.Info().Msg("plan execution complete")

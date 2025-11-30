@@ -72,6 +72,7 @@ linters:
           - varnamelen
           - dupl
           - dupword
+          - wrapcheck
       - path: _test.go
         text: "add-constant|cognitive-complexity|confusing-results"
         linters:

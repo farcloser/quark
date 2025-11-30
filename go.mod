@@ -21,7 +21,7 @@ require (
 require (
 	github.com/containerd/stargz-snapshotter/estargz v0.18.1 // indirect
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
-	github.com/docker/cli v29.0.0+incompatible // indirect
+	github.com/docker/cli v29.0.3+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
@@ -42,3 +42,6 @@ require (
 	google.golang.org/protobuf v1.36.10 // indirect
 	mvdan.cc/sh/v3 v3.12.0 // indirect
 )
+
+// PATCH: Force HTTPS for .local domains (mDNS can have valid TLS certs)
+replace github.com/google/go-containerregistry => github.com/apostasie/go-containerregistry v0.0.0-20251130050754-7de0e9169b57

@@ -1,16 +1,19 @@
-package sdk
+// Package env provides trivial environment helpers
+package env
 
 import (
 	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
+
+	"github.com/farcloser/quark/sdk"
 )
 
-// LoadEnv loads environment variables from the specified .env file.
+// Load loads environment variables from the specified .env file.
 // Values in the .env file will override existing environment variables.
 // Returns an error if the file doesn't exist or cannot be loaded.
-func LoadEnv(path string) error {
+func Load(path string) error {
 	if err := godotenv.Overload(path); err != nil {
 		return fmt.Errorf("failed to load .env file %q: %w", path, err)
 	}
@@ -18,22 +21,22 @@ func LoadEnv(path string) error {
 	return nil
 }
 
-// GetEnv retrieves an environment variable value.
+// Get retrieves an environment variable value.
 // Returns an error if the variable does not exist.
 // Empty values (FOO="") are allowed and will not cause an error.
-func GetEnv(key string) (string, error) {
+func Get(key string) (string, error) {
 	value, exists := os.LookupEnv(key)
 	if !exists {
-		return "", fmt.Errorf("%w: %q", ErrEnvVarNotSet, key)
+		return "", fmt.Errorf("%w: %q", sdk.ErrEnvVarNotSet, key)
 	}
 
 	return value, nil
 }
 
-// GetEnvWithFallback retrieves an environment variable value with a default fallback.
+// GetWithFallback retrieves an environment variable value with a default fallback.
 // If the variable does not exist, it returns the default value.
 // Empty values (FOO="") are NOT replaced with the default - only missing variables use the default.
-func GetEnvWithFallback(key, defaultValue string) string {
+func GetWithFallback(key, defaultValue string) string {
 	value, exists := os.LookupEnv(key)
 	if !exists {
 		return defaultValue

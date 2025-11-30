@@ -8,69 +8,89 @@ import (
 )
 
 // - Digest is optional (but recommended for verification).
-func TestVersionCheckBuilder_Build(t *testing.T) {
+func TestNewVersionCheck(t *testing.T) {
 	t.Parallel()
 
-	imageWithVersion, err := sdk.NewImage("timberio/vector").
-		Version("0.50.0-distroless-static").
-		Build()
+	imageWithVersion, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "timberio/vector",
+		Version: "0.50.0-distroless-static",
+	})
 	if err != nil {
 		t.Fatalf("Failed to create test image with version: %v", err)
 	}
 
-	imageWithVersionAndDigest, err := sdk.NewImage("timberio/vector").
-		Version("0.50.0-distroless-static").
-		Digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").
-		Build()
+	imageWithVersionAndDigest, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "timberio/vector",
+		Version: "0.50.0-distroless-static",
+		Digest:  "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	})
 	if err != nil {
 		t.Fatalf("Failed to create test image with version and digest: %v", err)
 	}
 
-	imageWithoutVersion, err := sdk.NewImage("timberio/vector").
-		Build()
+	imageWithoutVersion, err := sdk.NewImage(&sdk.ImageOpts{
+		Name: "timberio/vector",
+	})
 	if err != nil {
 		t.Fatalf("Failed to create test image without version: %v", err)
 	}
 
+	imageWithLatest, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "timberio/vector",
+		Version: "latest",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create test image with latest: %v", err)
+	}
+
 	tests := []struct {
 		name    string
-		build   func(*sdk.Plan) (*sdk.VersionCheck, error)
+		opName  string
+		source  *sdk.Image
+		force   bool
 		wantErr error
 	}{
 		{
-			name: "valid version check with version only",
-			build: func(plan *sdk.Plan) (*sdk.VersionCheck, error) {
-				return plan.VersionCheck("test-version").
-					Source(imageWithVersion).
-					Build()
-			},
+			name:    "valid version check with version only",
+			opName:  "test-version",
+			source:  imageWithVersion,
+			force:   false,
 			wantErr: nil,
 		},
 		{
-			name: "valid version check with version and digest",
-			build: func(plan *sdk.Plan) (*sdk.VersionCheck, error) {
-				return plan.VersionCheck("test-version-digest").
-					Source(imageWithVersionAndDigest).
-					Build()
-			},
+			name:    "valid version check with version and digest",
+			opName:  "test-version-digest",
+			source:  imageWithVersionAndDigest,
+			force:   false,
 			wantErr: nil,
 		},
 		{
-			name: "missing source image",
-			build: func(plan *sdk.Plan) (*sdk.VersionCheck, error) {
-				return plan.VersionCheck("test-version-no-source").
-					Build()
-			},
+			name:    "valid version check with force",
+			opName:  "test-version-force",
+			source:  imageWithVersion,
+			force:   true,
+			wantErr: nil,
+		},
+		{
+			name:    "missing source image",
+			opName:  "test-version-no-source",
+			source:  nil,
+			force:   false,
 			wantErr: sdk.ErrVersionCheckImageRequired,
 		},
 		{
-			name: "source image without version",
-			build: func(plan *sdk.Plan) (*sdk.VersionCheck, error) {
-				return plan.VersionCheck("test-version-no-version").
-					Source(imageWithoutVersion).
-					Build()
-			},
+			name:    "source image without version",
+			opName:  "test-version-no-version",
+			source:  imageWithoutVersion,
+			force:   false,
 			wantErr: sdk.ErrVersionCheckVersionRequired,
+		},
+		{
+			name:    "source image with latest tag",
+			opName:  "test-version-latest",
+			source:  imageWithLatest,
+			force:   false,
+			wantErr: sdk.ErrVersionCheckLatestNotSupported,
 		},
 	}
 
@@ -79,74 +99,57 @@ func TestVersionCheckBuilder_Build(t *testing.T) {
 			t.Parallel()
 
 			plan := sdk.NewPlan("test-plan")
-			check, err := tt.build(plan)
+			check, err := plan.CheckVersion(tt.opName, tt.source, tt.force)
 
 			if tt.wantErr != nil {
 				if err == nil {
-					t.Errorf("Build() error = nil, wantErr %v", tt.wantErr)
+					t.Errorf("CheckVersion() error = nil, wantErr %v", tt.wantErr)
 
 					return
 				}
 
 				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("Build() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("CheckVersion() error = %v, wantErr %v", err, tt.wantErr)
 				}
 
 				return
 			}
 
 			if err != nil {
-				t.Errorf("Build() unexpected error = %v", err)
+				t.Errorf("CheckVersion() unexpected error = %v", err)
 
 				return
 			}
 
 			if check == nil {
-				t.Error("Build() returned nil check with nil error")
+				t.Error("CheckVersion() returned nil check with nil error")
 			}
 		})
 	}
 }
 
-// INTENTION: Getters should return empty values before execution.
-func TestVersionCheck_Getters(t *testing.T) {
+// INTENTION: Result accessors should return nil before execution.
+func TestVersionCheck_ResultBeforeExecution(t *testing.T) {
 	t.Parallel()
 
 	plan := sdk.NewPlan("test-plan")
 
-	imageWithVersion, err := sdk.NewImage("timberio/vector").
-		Version("0.50.0-distroless-static").
-		Build()
+	imageWithVersion, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "timberio/vector",
+		Version: "0.50.0-distroless-static",
+	})
 	if err != nil {
 		t.Fatalf("Failed to create test image: %v", err)
 	}
 
-	check, err := plan.VersionCheck("test-version").
-		Source(imageWithVersion).
-		Build()
+	handle, err := plan.CheckVersion("test-version", imageWithVersion, false)
 	if err != nil {
-		t.Fatalf("Build() error = %v", err)
+		t.Fatalf("CheckVersion() error = %v", err)
 	}
 
-	// Before execution, all getters should return zero values
-	if check.CurrentVersion() != "" {
-		t.Errorf("CurrentVersion() before execution = %q, want empty", check.CurrentVersion())
-	}
-
-	if check.LatestVersion() != "" {
-		t.Errorf("LatestVersion() before execution = %q, want empty", check.LatestVersion())
-	}
-
-	if check.LatestDigest() != "" {
-		t.Errorf("LatestDigest() before execution = %q, want empty", check.LatestDigest())
-	}
-
-	if check.UpdateAvailable() {
-		t.Error("UpdateAvailable() before execution = true, want false")
-	}
-
-	if check.Executed() {
-		t.Error("Executed() before execution = true, want false")
+	// Before execution, result accessor should return nil
+	if handle.VersionCheckResult() != nil {
+		t.Error("VersionCheckResult() before execution should return nil")
 	}
 }
 
@@ -157,32 +160,29 @@ func TestVersionCheck_RegistryLookup(t *testing.T) {
 	plan := sdk.NewPlan("test-plan")
 
 	// Add registry credentials to plan
-	_, err := plan.Registry("ghcr.io").
-		Username("testuser").
-		Password("testpass").
-		Build()
-	if err != nil {
-		t.Fatalf("Failed to create registry: %v", err)
-	}
+	plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
+		Domain:   "ghcr.io",
+		Username: "testuser",
+		Token:    "testpass",
+	}))
 
 	// Image uses ghcr.io - should find registry credentials
-	imageWithVersion, err := sdk.NewImage("my-org/my-app").
-		Domain("ghcr.io").
-		Version("1.0.0").
-		Build()
+	imageWithVersion, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "my-org/my-app",
+		Domain:  "ghcr.io",
+		Version: "1.0.0",
+	})
 	if err != nil {
 		t.Fatalf("Failed to create test image: %v", err)
 	}
 
 	// Build should succeed and automatically lookup ghcr.io credentials
-	check, err := plan.VersionCheck("test-version").
-		Source(imageWithVersion).
-		Build()
+	check, err := plan.CheckVersion("test-version", imageWithVersion, false)
 	if err != nil {
-		t.Errorf("Build() error = %v, want nil", err)
+		t.Errorf("CheckVersion() error = %v, want nil", err)
 	}
 
 	if check == nil {
-		t.Error("Build() returned nil check")
+		t.Error("CheckVersion() returned nil check")
 	}
 }

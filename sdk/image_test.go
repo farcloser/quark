@@ -8,94 +8,70 @@ import (
 )
 
 // - Digest is optional but must be valid format if provided.
-func TestImageBuilder_Build(t *testing.T) {
+func TestNewImageFromArgs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		build   func() (*sdk.Image, error)
+		args    *sdk.ImageOpts
 		wantErr error
 	}{
 		{
-			name: "valid image with just name",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").Build()
-			},
+			name:    "valid image with just name",
+			args:    &sdk.ImageOpts{Name: "alpine"},
 			wantErr: nil,
 		},
 		{
-			name: "valid image with domain",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").Domain("docker.io").Build()
-			},
+			name:    "valid image with domain",
+			args:    &sdk.ImageOpts{Name: "alpine", Domain: "docker.io"},
 			wantErr: nil,
 		},
 		{
-			name: "valid image with version",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").Version("3.20").Build()
-			},
+			name:    "valid image with version",
+			args:    &sdk.ImageOpts{Name: "alpine", Version: "3.20"},
 			wantErr: nil,
 		},
 		{
 			name: "valid image with digest",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").
-					Digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").
-					Build()
+			args: &sdk.ImageOpts{
+				Name:   "alpine",
+				Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid image with all fields",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("my-org/my-app").
-					Domain("ghcr.io").
-					Version("v1.2.3").
-					Digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").
-					Build()
+			args: &sdk.ImageOpts{
+				Name:    "my-org/my-app",
+				Domain:  "ghcr.io",
+				Version: "v1.2.3",
+				Digest:  "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			},
 			wantErr: nil,
 		},
 		{
-			name: "empty name should fail",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("").Build()
-			},
+			name:    "empty name should fail",
+			args:    &sdk.ImageOpts{Name: ""},
 			wantErr: sdk.ErrImageNameRequired,
 		},
 		{
-			name: "whitespace-only name should fail",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("   ").Build()
-			},
+			name:    "whitespace-only name should fail",
+			args:    &sdk.ImageOpts{Name: "   "},
 			wantErr: sdk.ErrImageNameRequired,
 		},
 		{
-			name: "digest without sha256 prefix should fail",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").
-					Digest("0123456789abcdef").
-					Build()
-			},
+			name:    "digest without sha256 prefix should fail",
+			args:    &sdk.ImageOpts{Name: "alpine", Digest: "0123456789abcdef"},
 			wantErr: sdk.ErrInvalidImageDigest,
 		},
 		{
-			name: "digest with invalid characters should fail",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").
-					Digest("sha256:ZZZZZZZZZZ").
-					Build()
-			},
+			name:    "digest with invalid characters should fail",
+			args:    &sdk.ImageOpts{Name: "alpine", Digest: "sha256:ZZZZZZZZZZ"},
 			wantErr: sdk.ErrInvalidImageDigest,
 		},
 		{
-			name: "digest too short should fail",
-			build: func() (*sdk.Image, error) {
-				return sdk.NewImage("alpine").
-					Digest("sha256:abc").
-					Build()
-			},
+			name:    "digest too short should fail",
+			args:    &sdk.ImageOpts{Name: "alpine", Digest: "sha256:abc"},
 			wantErr: sdk.ErrInvalidImageDigest,
 		},
 	}
@@ -104,18 +80,18 @@ func TestImageBuilder_Build(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			img, err := tt.build()
+			img, err := sdk.NewImage(tt.args)
 
 			// Verify error matches expectation
 			if tt.wantErr != nil {
 				if err == nil {
-					t.Errorf("Build() error = nil, wantErr %v", tt.wantErr)
+					t.Errorf("NewImageFromArgs() error = nil, wantErr %v", tt.wantErr)
 
 					return
 				}
 
 				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("Build() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("NewImageFromArgs() error = %v, wantErr %v", err, tt.wantErr)
 				}
 
 				return
@@ -123,25 +99,25 @@ func TestImageBuilder_Build(t *testing.T) {
 
 			// No error expected - verify image is usable
 			if err != nil {
-				t.Errorf("Build() unexpected error = %v", err)
+				t.Errorf("NewImageFromArgs() unexpected error = %v", err)
 
 				return
 			}
 
 			if img == nil {
-				t.Error("Build() returned nil image with nil error")
+				t.Error("NewImageFromArgs() returned nil image with nil error")
 			}
 		})
 	}
 }
 
 // INTENTION: Once built, image properties cannot change.
-func TestImageBuilder_Immutability(t *testing.T) {
+func TestImage_Immutability(t *testing.T) {
 	t.Parallel()
 
-	img, err := sdk.NewImage("alpine").Version("3.20").Build()
+	img, err := sdk.NewImage(&sdk.ImageOpts{Name: "alpine", Version: "3.20"})
 	if err != nil {
-		t.Fatalf("Build() error = %v", err)
+		t.Fatalf("NewImageFromArgs() error = %v", err)
 	}
 
 	// Verify getters return correct values
@@ -155,7 +131,7 @@ func TestImageBuilder_Immutability(t *testing.T) {
 }
 
 // INTENTION: Empty domain should normalize to docker.io.
-func TestImageBuilder_DomainNormalization(t *testing.T) {
+func TestImage_DomainNormalization(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -189,14 +165,12 @@ func TestImageBuilder_DomainNormalization(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := sdk.NewImage("alpine")
-			if tt.domain != "" {
-				builder = builder.Domain(tt.domain)
-			}
-
-			img, err := builder.Build()
+			img, err := sdk.NewImage(&sdk.ImageOpts{
+				Name:   "alpine",
+				Domain: tt.domain,
+			})
 			if err != nil {
-				t.Fatalf("Build() error = %v", err)
+				t.Fatalf("NewImageFromArgs() error = %v", err)
 			}
 
 			if img.Domain() != tt.wantDomain {
@@ -207,7 +181,7 @@ func TestImageBuilder_DomainNormalization(t *testing.T) {
 }
 
 // INTENTION: Names should be validated for container registry compatibility.
-func TestImageBuilder_NameValidation(t *testing.T) {
+func TestImage_NameValidation(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -261,21 +235,21 @@ func TestImageBuilder_NameValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := sdk.NewImage(tt.imgName).Build()
+			_, err := sdk.NewImage(&sdk.ImageOpts{Name: tt.imgName})
 
 			if tt.wantErr && err == nil {
-				t.Error("Build() error = nil, want error")
+				t.Error("NewImageFromArgs() error = nil, want error")
 			}
 
 			if !tt.wantErr && err != nil {
-				t.Errorf("Build() error = %v, want nil", err)
+				t.Errorf("NewImageFromArgs() error = %v, want nil", err)
 			}
 		})
 	}
 }
 
 // INTENTION: Digests must be valid sha256 format if provided.
-func TestImageBuilder_DigestValidation(t *testing.T) {
+func TestImage_DigestValidation(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -324,24 +298,24 @@ func TestImageBuilder_DigestValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := sdk.NewImage("alpine").Digest(tt.digest).Build()
+			_, err := sdk.NewImage(&sdk.ImageOpts{Name: "alpine", Digest: tt.digest})
 
 			if tt.wantErr != nil {
 				if err == nil {
-					t.Errorf("Build() error = nil, wantErr %v", tt.wantErr)
+					t.Errorf("NewImageFromArgs() error = nil, wantErr %v", tt.wantErr)
 
 					return
 				}
 
 				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("Build() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("NewImageFromArgs() error = %v, wantErr %v", err, tt.wantErr)
 				}
 
 				return
 			}
 
 			if err != nil {
-				t.Errorf("Build() error = %v, want nil", err)
+				t.Errorf("NewImageFromArgs() error = %v, want nil", err)
 			}
 		})
 	}

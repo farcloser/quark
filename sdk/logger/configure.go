@@ -1,4 +1,5 @@
-package sdk
+// Package logger provides a way to initialize zerolog with sensible defaults.
+package logger
 
 import (
 	"context"
@@ -9,11 +10,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// ConfigureDefaultLogger configures the global zerolog logger with sensible defaults.
+// ConfigureWithDefaults configures the global zerolog logger with sensible defaults.
 // It uses a console writer with RFC3339 timestamps for human-readable output.
 // If a log level is provided, it sets that level. Otherwise, it reads from the LOG_LEVEL
 // environment variable (defaults to "info" if not set or invalid).
-func ConfigureDefaultLogger(ctx context.Context, level ...zerolog.Level) {
+func ConfigureWithDefaults(ctx context.Context, level ...zerolog.Level) {
 	zerolog.TimeFieldFormat = time.RFC3339
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	log.Logger.WithContext(ctx)

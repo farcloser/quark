@@ -7,11 +7,12 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/farcloser/quark/sdk"
+	"github.com/farcloser/quark/sdk/logger"
 )
 
 func main() {
 	ctx := context.Background()
-	sdk.ConfigureDefaultLogger(ctx)
+	logger.ConfigureWithDefaults(ctx)
 
 	plan := sdk.NewPlan("build-example")
 
@@ -22,37 +23,44 @@ func main() {
 	//
 	// Configure registry for pushing built images
 	// Replace with your actual registry credentials
-	// plan.Registry("ghcr.io").
-	//	Username(sdk.GetEnv("REGISTRY_USERNAME")).
-	//	Password(sdk.GetEnv("REGISTRY_PASSWORD")).
-	//	Build()
+	// plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
+	//     Domain:   "ghcr.io",
+	//     Username: username,
+	//     Token:    password,
+	// }))
 
 	// Define local buildkit nodes for multi-platform builds
-	amd64Builder, err := plan.BuildNode("amd64-builder").
-		Endpoint("localhost").
-		Platform(sdk.PlatformAMD64).
-		Build()
+	amd64Builder, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{
+		Name:     "amd64-builder",
+		Endpoint: "localhost",
+		Platform: sdk.PlatformAMD64,
+	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create amd64 build node")
 	}
 
-	arm64Builder, err := plan.BuildNode("arm64-builder").
-		Endpoint("localhost").
-		Platform(sdk.PlatformARM64).
-		Build()
+	plan.AddBuildNode(amd64Builder)
+
+	arm64Builder, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{
+		Name:     "arm64-builder",
+		Endpoint: "localhost",
+		Platform: sdk.PlatformARM64,
+	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create arm64 build node")
 	}
 
+	plan.AddBuildNode(arm64Builder)
+
 	// Build multi-platform image using local docker buildx
 	// Replace with your actual image tag
-	if _, err := plan.Build("example-build").
-		Context(".").
-		Dockerfile("Dockerfile").
-		Node(amd64Builder).
-		Node(arm64Builder).
-		Tag("ghcr.io/myorg/myimage:latest").
-		Build(); err != nil {
+	if _, err := plan.Build(&sdk.BuildArgs{
+		Name:       "example-build",
+		Context:    ".",
+		Dockerfile: "Dockerfile",
+		Nodes:      []*sdk.BuildNode{amd64Builder, arm64Builder},
+		Tag:        "ghcr.io/myorg/myimage:latest",
+	}); err != nil {
 		log.Fatal().Err(err).Msg("failed to create build")
 	}
 

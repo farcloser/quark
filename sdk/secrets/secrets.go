@@ -1,4 +1,5 @@
-package sdk
+// Package secrets provides secrete retrieval capabilities (1password and age supported)
+package secrets
 
 import (
 	"context"
@@ -14,7 +15,7 @@ const (
 )
 
 // AuthenticateOp pre-authenticates with 1Password CLI to establish a session.
-// This should be called before making parallel GetSecret/GetSecretDocument calls
+// This should be called before making parallel Get/GetDocument calls
 // to prevent multiple biometric authentication prompts.
 //
 // Uses `op signin` which is idempotent - it only prompts for authentication
@@ -29,7 +30,7 @@ func AuthenticateOp(ctx context.Context) error {
 	return nil
 }
 
-// GetSecretDocument retrieves raw document content using a pluggable backend system.
+// GetDocument retrieves raw document content using a pluggable backend system.
 // Supports multiple URI schemes:
 //   - "op://vault/item" - 1Password document
 //   - "age://path/to/file.age" - age encrypted file (raw decrypted content)
@@ -37,18 +38,18 @@ func AuthenticateOp(ctx context.Context) error {
 // Examples:
 //
 //	// 1Password document
-//	content, err := GetSecretDocument(ctx, "op://Security (office)/scimsession file")
+//	content, err := GetDocument(ctx, "op://Security (office)/scimsession file")
 //
 //	// Age encrypted SSH key
-//	sshKey, err := GetSecretDocument(ctx, "age://secrets/deploy-key.age")
+//	sshKey, err := GetDocument(ctx, "age://secrets/deploy-key.age")
 //
 // Returns the raw document content as bytes (no JSON parsing).
-func GetSecretDocument(ctx context.Context, uri string) ([]byte, error) {
+func GetDocument(ctx context.Context, uri string) ([]byte, error) {
 	//nolint:wrapcheck
 	return secretResolver.ResolveDocument(ctx, uri)
 }
 
-// GetSecret retrieves secrets using a pluggable backend system.
+// Get retrieves secrets using a pluggable backend system.
 // Supports multiple URI schemes:
 //   - "op://vault/item" - 1Password
 //   - "age://path/to/file.age[/json/path]" - age encryption
@@ -56,11 +57,11 @@ func GetSecretDocument(ctx context.Context, uri string) ([]byte, error) {
 // Examples:
 //
 //	// 1Password
-//	secrets, err := GetSecret(ctx, "op://Security (build)/deploy.registry.rw",
+//	secrets, err := Get(ctx, "op://Security (build)/deploy.registry.rw",
 //	    []string{"organization", "username", "password"})
 //
 //	// Age encryption
-//	secrets, err := GetSecret(ctx, "age://secrets/db.json.age/prod",
+//	secrets, err := Get(ctx, "age://secrets/db.json.age/prod",
 //	    []string{"host", "password"})
 //
 // Returns a map of field names to their string values.
@@ -76,11 +77,11 @@ func initSecretResolver() *secrets.Resolver {
 	return resolver
 }
 
-// GetSecret retrieves specific fields from a secret identified by URI.
+// Get retrieves specific fields from a secret identified by URI.
 // URI format: "scheme://path" where scheme determines the backend (e.g., "op://vault/item" or "age://file.age").
 // Fields: list of field names to extract from the secret.
 // Returns a map of field names to their values.
-func GetSecret(ctx context.Context, uri string, fields []string) (map[string]string, error) {
+func Get(ctx context.Context, uri string, fields []string) (map[string]string, error) {
 	//nolint:wrapcheck
 	return secretResolver.Resolve(ctx, uri, fields)
 }

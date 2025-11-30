@@ -8,22 +8,6 @@ import (
 
 // Secret reference errors (re-exported from internal/secrets for backward compatibility).
 var (
-	// ErrDocumentReferenceEmpty indicates document reference is empty.
-	// Deprecated: Use ErrReferenceEmpty for new code.
-	ErrDocumentReferenceEmpty = secrets.ErrReferenceEmpty
-
-	// ErrDocumentReferenceInvalidPrefix indicates document reference has invalid scheme.
-	// Deprecated: Use ErrReferenceInvalidFormat for new code.
-	ErrDocumentReferenceInvalidPrefix = secrets.ErrReferenceInvalidFormat
-
-	// ErrDocumentReferenceInvalidFormat indicates document reference has invalid format.
-	// Deprecated: Use ErrReferenceInvalidFormat for new code.
-	ErrDocumentReferenceInvalidFormat = secrets.ErrReferenceInvalidFormat
-
-	// ErrDocumentReferenceEmptyParts indicates document reference has empty required parts.
-	// Deprecated: Use ErrReferenceEmptyParts for new code.
-	ErrDocumentReferenceEmptyParts = secrets.ErrReferenceEmptyParts
-
 	// ErrDocumentEmpty indicates document resolved to empty content.
 	ErrDocumentEmpty = secrets.ErrDocumentEmpty
 
@@ -41,12 +25,6 @@ var (
 
 	// ErrFieldNotFound indicates requested field not found in secret.
 	ErrFieldNotFound = secrets.ErrFieldNotFound
-)
-
-// Builder errors.
-var (
-	// ErrBuilderAlreadyUsed indicates a builder has been used and cannot be reused.
-	ErrBuilderAlreadyUsed = errors.New("builder has already been used; create a new builder for each operation")
 )
 
 // Build errors.
@@ -80,9 +58,6 @@ var (
 
 	// ErrVersionCheckVersionRequired indicates version check image must have version specified.
 	ErrVersionCheckVersionRequired = errors.New("version check image must have version specified")
-
-	// ErrVersionCheckExplicitVersionRequired indicates version check requires explicit version tag.
-	ErrVersionCheckExplicitVersionRequired = errors.New("version check requires explicit version tag")
 
 	// ErrVersionCheckLatestNotSupported indicates version check does not support "latest" tag.
 	ErrVersionCheckLatestNotSupported = errors.New("version check not supported for 'latest' tag")

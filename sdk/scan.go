@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -29,6 +30,9 @@ var (
 	SeverityHigh = ScanSeverity{"HIGH"}
 	// SeverityCritical represents critical severity.
 	SeverityCritical = ScanSeverity{"CRITICAL"}
+
+	// scanMutex serializes scan operations to avoid Trivy database lock contention.
+	scanMutex sync.Mutex
 )
 
 // String returns the string representation of the severity.
@@ -179,12 +183,21 @@ const (
 
 // ScanSeverityCheck represents a threshold check with an action.
 type ScanSeverityCheck struct {
-	threshold ScanSeverity
-	action    ScanAction
+	Threshold ScanSeverity `json:"threshold"`
+	Action    ScanAction   `json:"action"`
 }
 
-// Scan represents a vulnerability scan operation.
-type Scan struct {
+// ScanArgs contains configuration options for creating a scan operation.
+type ScanArgs struct {
+	Description    string              // Required - operation name
+	Source         *Image              // Required - image to scan
+	SeverityChecks []ScanSeverityCheck // Optional - severity checks (default: HIGH+CRITICAL error)
+	Format         ScanFormat          // Optional - output format (default: table)
+	Timeout        time.Duration       // Optional - operation timeout
+}
+
+// scanOp represents a vulnerability scan operation.
+type scanOp struct {
 	opName         string
 	image          *Image
 	registry       *Registry
@@ -194,105 +207,21 @@ type Scan struct {
 	log            zerolog.Logger
 }
 
-// ScanBuilder builds a Scan.
-type ScanBuilder struct {
-	plan  *Plan
-	scan  *Scan
-	built bool
-}
+func (s *scanOp) execute(ctx context.Context) error {
+	// Serialize scans to avoid Trivy database lock contention
+	scanMutex.Lock()
+	defer scanMutex.Unlock()
 
-// Source sets the image to scan.
-// The image must have a digest specified for secure scanning.
-// Registry credentials are looked up from the plan's registry collection using the image domain.
-// If no registry is found, anonymous access will be used.
-func (builder *ScanBuilder) Source(image *Image) *ScanBuilder {
-	builder.scan.image = image
-	builder.scan.registry = builder.plan.getRegistry(image.Domain())
-
-	return builder
-}
-
-// Severity adds a severity threshold check.
-// If action is not provided, defaults to ActionError (fail on match).
-// Multiple calls are processed sequentially - first Error stops execution.
-//
-// Examples:
-//
-//	.ScanSeverity(SeverityCritical)                  // Fail if CRITICAL found
-//	.ScanSeverity(SeverityMedium, ActionWarn)        // Warn if MEDIUM+ found
-//	.ScanSeverity(SeverityLow, ActionInfo)           // Info if LOW+ found
-func (builder *ScanBuilder) Severity(threshold ScanSeverity, action ...ScanAction) *ScanBuilder {
-	selectedAction := ActionError // default
-	if len(action) > 0 {
-		selectedAction = action[0]
-	}
-
-	builder.scan.severityChecks = append(builder.scan.severityChecks, ScanSeverityCheck{
-		threshold: threshold,
-		action:    selectedAction,
-	})
-
-	return builder
-}
-
-// Format sets the output format.
-func (builder *ScanBuilder) Format(format ScanFormat) *ScanBuilder {
-	builder.scan.format = format
-
-	return builder
-}
-
-// Timeout sets the operation timeout.
-// If not set, the operation will use the context timeout from Plan.Execute().
-func (builder *ScanBuilder) Timeout(duration time.Duration) *ScanBuilder {
-	builder.scan.timeout = duration
-
-	return builder
-}
-
-// Build validates and adds the scan to the plan.
-// The builder becomes unusable after Build() is called.
-// Create a new builder for each operation.
-func (builder *ScanBuilder) Build() (*Scan, error) {
-	if builder.built {
-		return nil, ErrBuilderAlreadyUsed
-	}
-
-	builder.built = true
-
-	if builder.scan.image == nil {
-		return nil, ErrScanImageRequired
-	}
-	// Digest validation moved to execute() - digest may be populated during plan execution
-	if len(builder.scan.severityChecks) == 0 {
-		// Default to HIGH and CRITICAL with Error action
-		builder.scan.severityChecks = []ScanSeverityCheck{
-			{threshold: SeverityHigh, action: ActionError},
-			{threshold: SeverityCritical, action: ActionError},
-		}
-	}
-
-	if builder.scan.format == (ScanFormat{}) {
-		builder.scan.format = FormatTable
-	}
-
-	builder.plan.scans = append(builder.plan.scans, builder.scan)
-	builder.plan.operations = append(builder.plan.operations, builder.scan)
-
-	return builder.scan, nil
-}
-
-func (scan *Scan) execute(ctx context.Context) error {
 	// Apply timeout if configured
-	if scan.timeout > 0 {
+	if s.timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, scan.timeout)
+		ctx, cancel = context.WithTimeout(ctx, s.timeout)
 		defer cancel()
 	}
 
 	// Validate digest is present (may have been populated during plan execution)
-	if scan.image.Digest() == "" {
-		return fmt.Errorf("%w: %s", ErrScanMustHaveDigest, scan.image.Name())
+	if s.image.Digest() == "" {
+		return fmt.Errorf("%w: %s", ErrScanMustHaveDigest, s.image.Name())
 	}
 
 	// Construct image reference for scanning
@@ -302,31 +231,31 @@ func (scan *Scan) execute(ctx context.Context) error {
 	var err error
 
 	switch {
-	case scan.image.Digest() != "":
-		imageRef, err = scan.image.digestRef()
+	case s.image.Digest() != "":
+		imageRef, err = s.image.digestRef()
 		if err != nil {
 			return fmt.Errorf("failed to build digest reference: %w", err)
 		}
-	case scan.image.Version() != "":
-		imageRef = scan.image.tagRef()
+	case s.image.Version() != "":
+		imageRef = s.image.tagRef()
 	default:
-		imageRef = scan.image.Name()
+		imageRef = s.image.Name()
 	}
 
-	scan.log.Info().
+	s.log.Info().
 		Str("image", imageRef).
-		Str("format", scan.format.String()).
+		Str("format", s.format.String()).
 		Msg("scanning image")
 
 	// Create Trivy scanner
-	scanner := trivy.NewScanner(scan.log)
+	scanner := trivy.NewScanner(s.log)
 
 	// Extract registry credentials if provided
 	var registryHost, username, password string
-	if scan.registry != nil {
-		registryHost = scan.registry.host
-		username = scan.registry.username
-		password = scan.registry.password
+	if s.registry != nil {
+		registryHost = s.registry.domain
+		username = s.registry.username
+		password = s.registry.token
 	}
 
 	// Run Trivy scan ONCE with ALL severity levels to get complete results
@@ -342,7 +271,7 @@ func (scan *Scan) execute(ctx context.Context) error {
 		ctx,
 		imageRef,
 		allSeverities,
-		scan.format.String(),
+		s.format.String(),
 		registryHost,
 		username,
 		password,
@@ -352,9 +281,9 @@ func (scan *Scan) execute(ctx context.Context) error {
 	}
 
 	// Process severity checks sequentially (fail-fast on first Error)
-	for _, check := range scan.severityChecks {
+	for _, check := range s.severityChecks {
 		// Get vulnerabilities at or above this threshold
-		matchingVulns := getVulnerabilitiesAtOrAbove(result, check.threshold)
+		matchingVulns := getVulnerabilitiesAtOrAbove(result, check.Threshold)
 
 		if len(matchingVulns) == 0 {
 			continue // No vulnerabilities at this threshold, skip
@@ -370,39 +299,39 @@ func (scan *Scan) execute(ctx context.Context) error {
 			},
 		}
 
-		output, err := scanner.FormatOutput(thresholdResult, scan.format.String())
+		output, err := scanner.FormatOutput(thresholdResult, s.format.String())
 		if err != nil {
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
 		// Handle according to action
-		switch check.action {
+		switch check.Action {
 		case ActionError:
-			scan.log.Error().
-				Str("threshold", check.threshold.String()).
+			s.log.Error().
+				Str("threshold", check.Threshold.String()).
 				Int("count", len(matchingVulns)).
 				Msg(msgVulnerabilitiesFound)
-			scan.log.Error().Msg(output)
+			s.log.Error().Msg(output)
 
-			return fmt.Errorf("%w: %s", ErrVulnerabilitiesFound, check.threshold)
+			return fmt.Errorf("%w: %s", ErrVulnerabilitiesFound, check.Threshold)
 
 		case ActionWarn:
-			scan.log.Warn().
-				Str("threshold", check.threshold.String()).
+			s.log.Warn().
+				Str("threshold", check.Threshold.String()).
 				Int("count", len(matchingVulns)).
 				Msg(msgVulnerabilitiesFound)
-			scan.log.Warn().Msg(output)
+			s.log.Warn().Msg(output)
 
 		case ActionInfo:
-			scan.log.Info().
-				Str("threshold", check.threshold.String()).
+			s.log.Info().
+				Str("threshold", check.Threshold.String()).
 				Int("count", len(matchingVulns)).
 				Msg(msgVulnerabilitiesFound)
-			scan.log.Info().Msg(output)
+			s.log.Info().Msg(output)
 		}
 	}
 
-	scan.log.Info().Msg("scan complete")
+	s.log.Info().Msg("scan complete")
 
 	return nil
 }
@@ -435,6 +364,6 @@ func getVulnerabilitiesAtOrAbove(result *trivy.ScanResult, threshold ScanSeverit
 }
 
 // operationName returns the scan operation name (implements operation interface).
-func (scan *Scan) operationName() string {
-	return scan.opName
+func (s *scanOp) operationName() string {
+	return s.opName
 }

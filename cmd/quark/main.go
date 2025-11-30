@@ -12,7 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v3"
 
-	"github.com/farcloser/quark/sdk"
+	"github.com/farcloser/quark/sdk/logger"
 )
 
 var errPlanFileNotFound = errors.New("plan file not found")
@@ -20,7 +20,7 @@ var errPlanFileNotFound = errors.New("plan file not found")
 func main() {
 	ctx := context.Background()
 	// Configure zerolog with LOG_LEVEL env var support
-	sdk.ConfigureDefaultLogger(ctx)
+	logger.ConfigureWithDefaults(ctx)
 
 	cmd := &cli.Command{
 		Name:    "quark",
