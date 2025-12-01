@@ -21,9 +21,16 @@ func TestNewSync(t *testing.T) {
 		t.Fatalf("Failed to create test source image: %v", err)
 	}
 
-	sourceWithoutDigest, err := sdk.NewImage(&sdk.ImageOpts{
+	sourceWithTagOnly, err := sdk.NewImage(&sdk.ImageOpts{
 		Name:    "alpine",
 		Version: "3.20",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create test source image: %v", err)
+	}
+
+	sourceWithNoTagNoDigest, err := sdk.NewImage(&sdk.ImageOpts{
+		Name: "alpine",
 	})
 	if err != nil {
 		t.Fatalf("Failed to create test source image: %v", err)
@@ -79,13 +86,22 @@ func TestNewSync(t *testing.T) {
 			wantErr: sdk.ErrSyncDestinationRequired,
 		},
 		{
-			name: "source image without digest (security violation)",
+			name: "valid sync with tag only (signature verified at runtime)",
 			args: &sdk.SyncArgs{
-				Description: "test-sync-no-digest",
-				Source:      sourceWithoutDigest,
+				Description: "test-sync-tag-only",
+				Source:      sourceWithTagOnly,
 				Destination: destImage,
 			},
-			wantErr: sdk.ErrSyncSourceDigestRequired,
+			wantErr: nil,
+		},
+		{
+			name: "source image without tag or digest",
+			args: &sdk.SyncArgs{
+				Description: "test-sync-no-tag-no-digest",
+				Source:      sourceWithNoTagNoDigest,
+				Destination: destImage,
+			},
+			wantErr: sdk.ErrMustSpecifyTagOrDigest,
 		},
 	}
 

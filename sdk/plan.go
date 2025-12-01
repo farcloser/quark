@@ -30,6 +30,9 @@ type Plan struct {
 	registries map[string]*Registry // keyed by normalized domain
 	buildNodes []*BuildNode
 
+	// Trusted signers for signature verification
+	trustedSigners []SignerIdentity
+
 	// Operation DAG for dependency-based parallel execution
 	graph   *dag.Graph[*operationWrapper]
 	nodeSeq atomic.Uint64
@@ -180,6 +183,16 @@ func (plan *Plan) AddRegistry(reg *Registry) {
 	plan.registries[reg.domain] = reg
 }
 
+// TrustSigner adds a signer identity to the global trusted signers list.
+// Images without per-image SignedBy will be verified against these signers.
+func (plan *Plan) TrustSigner(signer SignerIdentity) {
+	plan.trustedSigners = append(plan.trustedSigners, signer)
+	plan.log.Debug().
+		Str("subject", signer.Subject).
+		Str("issuer", signer.Issuer).
+		Msg("added trusted signer")
+}
+
 // AddBuildNode attaches an existing build node to the plan.
 func (plan *Plan) AddBuildNode(node *BuildNode) {
 	plan.buildNodes = append(plan.buildNodes, node)
@@ -222,13 +235,20 @@ func (plan *Plan) ListTags(ctx context.Context, image *Image) ([]string, error) 
 
 // Sync creates a sync operation and registers it with the plan.
 // Returns a handle for chaining additional operations.
+//
+// The source image must have at least a tag or digest:
+//   - Tag only: Resolves to digest, verifies signature
+//   - Digest only: Verifies signature on digest
+//   - Tag + Digest: Verifies signature, detects tag drift
+//   - InsecureNoSignature: Skips verification (not recommended)
 func (plan *Plan) Sync(args *SyncArgs) (*Handle, error) {
 	if args.Source == nil {
 		return nil, ErrSyncSourceRequired
 	}
 
-	if args.Source.Digest() == "" {
-		return nil, ErrSyncSourceDigestRequired
+	// Validate that at least tag or digest is specified.
+	if args.Source.Version() == "" && args.Source.Digest() == "" {
+		return nil, ErrMustSpecifyTagOrDigest
 	}
 
 	if args.Destination == nil {
@@ -247,6 +267,7 @@ func (plan *Plan) Sync(args *SyncArgs) (*Handle, error) {
 		destImage:      args.Destination,
 		destRegistry:   plan.getRegistry(args.Destination.Domain()),
 		platforms:      platforms,
+		trustedSigners: plan.trustedSigners,
 		log:            plan.log.With().Str("sync", args.Description).Logger(),
 	}
 

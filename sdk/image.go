@@ -17,12 +17,25 @@ type ImageOpts struct {
 	Domain  string `json:"domain,omitempty"`  // Optional - registry domain (default: docker.io)
 	Version string `json:"version,omitempty"` // Optional - image tag/version
 	Digest  string `json:"digest,omitempty"`  // Optional - image digest for verification
+
+	// InsecureNoSignature bypasses signature verification (dangerous).
+	// Use only for legacy unsigned images that cannot be signed.
+	InsecureNoSignature bool `json:"insecureNoSignature,omitempty"`
+
+	// SignedBy specifies trusted signers for this specific image.
+	// If set, signature must match one of these identities (global signers ignored).
+	// If empty, global plan signers are used.
+	SignedBy []SignerIdentity `json:"signedBy,omitempty"`
 }
 
 // Image represents a container image reference with optional version and digest.
 type Image struct {
 	ref *reference.ImageReference
 	log zerolog.Logger
+
+	// Signature verification settings
+	insecureNoSignature bool
+	signedBy            []SignerIdentity
 }
 
 // NewImage creates a new Image from the provided arguments.
@@ -59,8 +72,10 @@ func NewImage(args *ImageOpts) (*Image, error) {
 	}
 
 	return &Image{
-		ref: ref,
-		log: log.Logger.With().Str("image", name).Logger(),
+		ref:                 ref,
+		log:                 log.Logger.With().Str("image", name).Logger(),
+		insecureNoSignature: args.InsecureNoSignature,
+		signedBy:            args.SignedBy,
 	}, nil
 }
 

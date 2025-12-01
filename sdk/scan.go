@@ -183,8 +183,8 @@ const (
 
 // ScanSeverityCheck represents a threshold check with an action.
 type ScanSeverityCheck struct {
-	Threshold ScanSeverity `json:"threshold"`
-	Action    ScanAction   `json:"action"`
+	Threshold ScanSeverity `json:"threshold,omitempty"`
+	Action    ScanAction   `json:"action,omitempty"`
 }
 
 // ScanArgs contains configuration options for creating a scan operation.

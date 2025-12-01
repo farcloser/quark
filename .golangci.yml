@@ -130,6 +130,9 @@ linters:
             - github.com/pkg/sftp
             - gotest.tools/v3/assert
             - filippo.io/age
+            # Sigstore
+            - github.com/sigstore/sigstore-go
+            - github.com/sigstore/protobuf-specs
         no-ssh-out:
           files:
             - $all
@@ -142,6 +145,7 @@ linters:
           files:
             - $all
             - "!**/internal/**"
+            - "!**/sdk/trust/**"  # trust package configures go-containerregistry's DefaultTransport
           deny:
             - pkg: github.com/farcloser/godolint
             - pkg: github.com/carapace-sh/carapace-shlex
@@ -149,6 +153,11 @@ linters:
             - pkg: github.com/distribution/reference
             - pkg: gotest.tools/v3/assert
             - pkg: filippo.io/age
+
+    gomoddirectives:
+      # Allow replace for go-containerregistry (HTTPS patch for .local domains)
+      replace-allow-list:
+        - github.com/google/go-containerregistry
 
     staticcheck:
       checks:
