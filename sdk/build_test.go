@@ -2,91 +2,98 @@ package sdk_test
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/farcloser/quark/sdk"
 )
 
 // - Timeout is optional.
-func TestBuildBuilder_Build(t *testing.T) {
+func TestNewBuild(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		build   func(*sdk.Plan, *sdk.BuildNode) (*sdk.Build, error)
+		build   func(*sdk.Plan, *sdk.BuildNode) (*sdk.Handle, error)
 		wantErr error
 	}{
 		{
 			name: "valid build with all required fields",
-			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Build, error) {
-				return plan.Build("test-build").
-					Context("/path/to/context").
-					Node(buildNode).
-					Tag("myapp:latest").
-					Build()
+			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Handle, error) {
+				return plan.Build(&sdk.BuildArgs{
+					Name:    "test-build",
+					Context: "/path/to/context",
+					Nodes:   []*sdk.BuildNode{buildNode},
+					Tag:     "myapp:latest",
+				})
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid build with explicit dockerfile",
-			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Build, error) {
-				return plan.Build("test-build-dockerfile").
-					Context("/path/to/context").
-					Dockerfile("custom.Dockerfile").
-					Node(buildNode).
-					Tag("myapp:latest").
-					Build()
+			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Handle, error) {
+				return plan.Build(&sdk.BuildArgs{
+					Name:       "test-build-dockerfile",
+					Context:    "/path/to/context",
+					Dockerfile: "custom.Dockerfile",
+					Nodes:      []*sdk.BuildNode{buildNode},
+					Tag:        "myapp:latest",
+				})
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid build with multiple nodes",
-			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Build, error) {
-				node2, err := plan.BuildNode("test-node-2").
-					Endpoint("ssh://builder@192.168.1.101").
-					Platform(sdk.PlatformARM64).
-					Build()
+			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Handle, error) {
+				node2, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{
+					Name:     "test-node-2",
+					Endpoint: "ssh://builder@192.168.1.101",
+					Platform: sdk.PlatformARM64,
+				})
 				if err != nil {
-					return nil, fmt.Errorf("failed to create test node: %w", err)
+					return nil, err
 				}
 
-				return plan.Build("test-build-multi").
-					Context("/path/to/context").
-					Node(buildNode).
-					Node(node2).
-					Tag("myapp:latest").
-					Build()
+				plan.AddBuildNode(node2)
+
+				return plan.Build(&sdk.BuildArgs{
+					Name:    "test-build-multi",
+					Context: "/path/to/context",
+					Nodes:   []*sdk.BuildNode{buildNode, node2},
+					Tag:     "myapp:latest",
+				})
 			},
 			wantErr: nil,
 		},
 		{
 			name: "missing build context",
-			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Build, error) {
-				return plan.Build("test-build-no-context").
-					Node(buildNode).
-					Tag("myapp:latest").
-					Build()
+			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Handle, error) {
+				return plan.Build(&sdk.BuildArgs{
+					Name:  "test-build-no-context",
+					Nodes: []*sdk.BuildNode{buildNode},
+					Tag:   "myapp:latest",
+				})
 			},
 			wantErr: sdk.ErrBuildContextRequired,
 		},
 		{
 			name: "missing build node",
-			build: func(plan *sdk.Plan, _ *sdk.BuildNode) (*sdk.Build, error) {
-				return plan.Build("test-build-no-node").
-					Context("/path/to/context").
-					Tag("myapp:latest").
-					Build()
+			build: func(plan *sdk.Plan, _ *sdk.BuildNode) (*sdk.Handle, error) {
+				return plan.Build(&sdk.BuildArgs{
+					Name:    "test-build-no-node",
+					Context: "/path/to/context",
+					Tag:     "myapp:latest",
+				})
 			},
 			wantErr: sdk.ErrBuildNodeRequired,
 		},
 		{
 			name: "missing tag",
-			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Build, error) {
-				return plan.Build("test-build-no-tag").
-					Context("/path/to/context").
-					Node(buildNode).
-					Build()
+			build: func(plan *sdk.Plan, buildNode *sdk.BuildNode) (*sdk.Handle, error) {
+				return plan.Build(&sdk.BuildArgs{
+					Name:    "test-build-no-tag",
+					Context: "/path/to/context",
+					Nodes:   []*sdk.BuildNode{buildNode},
+				})
 			},
 			wantErr: sdk.ErrBuildTagRequired,
 		},
@@ -98,13 +105,16 @@ func TestBuildBuilder_Build(t *testing.T) {
 
 			plan := sdk.NewPlan("test-plan")
 
-			buildNode, err := plan.BuildNode("test-node").
-				Endpoint("ssh://builder@192.168.1.100").
-				Platform(sdk.PlatformAMD64).
-				Build()
+			buildNode, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{
+				Name:     "test-node",
+				Endpoint: "ssh://builder@192.168.1.100",
+				Platform: sdk.PlatformAMD64,
+			})
 			if err != nil {
 				t.Fatalf("Failed to create test build node: %v", err)
 			}
+
+			plan.AddBuildNode(buildNode)
 
 			build, err := tt.build(plan, buildNode)
 
@@ -136,60 +146,55 @@ func TestBuildBuilder_Build(t *testing.T) {
 }
 
 // INTENTION: BuildNode must have endpoint and platform.
-func TestBuildNodeBuilder_Build(t *testing.T) {
+func TestNewBuildNode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		build   func(*sdk.Plan) (*sdk.BuildNode, error)
+		args    *sdk.BuildNodeOpts
 		wantErr error
 	}{
 		{
 			name: "valid build node with SSH endpoint",
-			build: func(plan *sdk.Plan) (*sdk.BuildNode, error) {
-				return plan.BuildNode("test-node-ssh").
-					Endpoint("ssh://builder@192.168.1.100").
-					Platform(sdk.PlatformAMD64).
-					Build()
+			args: &sdk.BuildNodeOpts{
+				Name:     "test-node-ssh",
+				Endpoint: "ssh://builder@192.168.1.100",
+				Platform: sdk.PlatformAMD64,
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid build node with TCP endpoint",
-			build: func(plan *sdk.Plan) (*sdk.BuildNode, error) {
-				return plan.BuildNode("test-node-tcp").
-					Endpoint("tcp://192.168.1.100:2376").
-					Platform(sdk.PlatformARM64).
-					Build()
+			args: &sdk.BuildNodeOpts{
+				Name:     "test-node-tcp",
+				Endpoint: "tcp://192.168.1.100:2376",
+				Platform: sdk.PlatformARM64,
 			},
 			wantErr: nil,
 		},
 		{
 			name: "empty endpoint",
-			build: func(plan *sdk.Plan) (*sdk.BuildNode, error) {
-				return plan.BuildNode("test-node-empty").
-					Endpoint("").
-					Platform(sdk.PlatformAMD64).
-					Build()
+			args: &sdk.BuildNodeOpts{
+				Name:     "test-node-empty",
+				Endpoint: "",
+				Platform: sdk.PlatformAMD64,
 			},
 			wantErr: sdk.ErrBuildNodeEndpointRequired,
 		},
 		{
 			name: "whitespace-only endpoint",
-			build: func(plan *sdk.Plan) (*sdk.BuildNode, error) {
-				return plan.BuildNode("test-node-whitespace").
-					Endpoint("   ").
-					Platform(sdk.PlatformAMD64).
-					Build()
+			args: &sdk.BuildNodeOpts{
+				Name:     "test-node-whitespace",
+				Endpoint: "   ",
+				Platform: sdk.PlatformAMD64,
 			},
 			wantErr: sdk.ErrBuildNodeEndpointRequired,
 		},
 		{
 			name: "missing platform",
-			build: func(plan *sdk.Plan) (*sdk.BuildNode, error) {
-				return plan.BuildNode("test-node-no-platform").
-					Endpoint("ssh://builder@192.168.1.100").
-					Build()
+			args: &sdk.BuildNodeOpts{
+				Name:     "test-node-no-platform",
+				Endpoint: "ssh://builder@192.168.1.100",
 			},
 			wantErr: sdk.ErrBuildNodePlatformRequired,
 		},
@@ -199,31 +204,30 @@ func TestBuildNodeBuilder_Build(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			plan := sdk.NewPlan("test-plan")
-			node, err := tt.build(plan)
+			node, err := sdk.NewBuildNode(tt.args)
 
 			if tt.wantErr != nil {
 				if err == nil {
-					t.Errorf("Build() error = nil, wantErr %v", tt.wantErr)
+					t.Errorf("NewBuildNode() error = nil, wantErr %v", tt.wantErr)
 
 					return
 				}
 
 				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("Build() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("NewBuildNode() error = %v, wantErr %v", err, tt.wantErr)
 				}
 
 				return
 			}
 
 			if err != nil {
-				t.Errorf("Build() unexpected error = %v", err)
+				t.Errorf("NewBuildNode() unexpected error = %v", err)
 
 				return
 			}
 
 			if node == nil {
-				t.Error("Build() returned nil node with nil error")
+				t.Error("NewBuildNode() returned nil node with nil error")
 			}
 		})
 	}

@@ -9,206 +9,116 @@ import (
 	"github.com/farcloser/quark/internal/version"
 )
 
-// VersionCheck represents a version check operation.
-type VersionCheck struct {
+// VersionCheckResult contains the result of a version check operation.
+type VersionCheckResult struct {
+	// CurrentVersion is the version that was checked.
+	CurrentVersion string
+	// LatestVersion is the latest available version.
+	LatestVersion string
+	// LatestDigest is the digest of the latest version.
+	LatestDigest string
+	// UpdateAvailable indicates whether an update is available.
+	UpdateAvailable bool
+}
+
+// versionCheckOp represents a version check operation.
+type versionCheckOp struct {
 	opName   string
 	image    *Image
 	registry *Registry
 	log      zerolog.Logger
+	force    bool // if true, digest mismatches are warnings instead of errors
 
 	// Results populated after execution
 	currentVersion  string
 	latestVersion   string
 	latestDigest    string
 	updateAvailable bool
-	executed        bool
 }
 
-// VersionCheckBuilder builds a VersionCheck.
-type VersionCheckBuilder struct {
-	plan  *Plan
-	check *VersionCheck
-	built bool
-}
+func (v *versionCheckOp) execute(_ context.Context) error {
+	img := v.image
 
-// Source sets the source image.
-// The image must have a version specified. Digest is optional:
-// - If digest is provided: verifies the version tag points to expected digest (fails on mismatch)
-// - If digest is not provided: shows warning with actual digest
-// Registry credentials are looked up from the plan's registry collection using the image domain.
-// If no registry is found, anonymous access will be used (public repos only).
-func (builder *VersionCheckBuilder) Source(image *Image) *VersionCheckBuilder {
-	builder.check.image = image
-	builder.check.registry = builder.plan.getRegistry(image.Domain())
-
-	return builder
-}
-
-// Build validates and adds the version check to the plan.
-// The builder becomes unusable after Build() is called.
-// Create a new builder for each operation.
-func (builder *VersionCheckBuilder) Build() (*VersionCheck, error) {
-	if builder.built {
-		return nil, ErrBuilderAlreadyUsed
-	}
-
-	builder.built = true
-
-	if builder.check.image == nil {
-		return nil, ErrVersionCheckImageRequired
-	}
-
-	if builder.check.image.Version() == "" {
-		return nil, ErrVersionCheckVersionRequired
-	}
-
-	builder.plan.versionChecks = append(builder.plan.versionChecks, builder.check)
-	builder.plan.operations = append(builder.plan.operations, builder.check)
-
-	return builder.check, nil
-}
-
-func (check *VersionCheck) execute(_ context.Context) error {
-	img := check.image
-
-	check.log.Info().
+	v.log.Info().
 		Str("image", img.Name()).
 		Str("version", img.Version()).
 		Msg("checking for version updates")
 
 	// Create version checker with optional registry credentials
 	var username, password string
-	if check.registry != nil {
-		username = check.registry.username
-		password = check.registry.password
+	if v.registry != nil {
+		username = v.registry.username
+		password = v.registry.token
 	}
 
-	checker := version.NewChecker(username, password, check.log)
+	checker := version.NewChecker(username, password, v.log)
 
-	// Use tagRef to query what the tag points to
-	tagReference, err := img.tagRef()
-	if err != nil {
-		return fmt.Errorf("failed to build tag reference: %w", err)
-	}
-
-	// Verify current version digest if provided
-	if img.Digest() != "" {
-		check.log.Debug().
-			Str("expected_digest", img.Digest()).
-			Msg("verifying current version digest")
-
-		actualDigest, err := checker.GetTagDigest(tagReference)
-		if err != nil {
-			return fmt.Errorf("failed to get current version digest: %w", err)
-		}
-
-		if actualDigest != img.Digest() {
-			check.log.Error().
-				Str("expected", img.Digest()).
-				Str("actual", actualDigest).
-				Str("version", img.Version()).
-				Msg("current version digest mismatch")
-
-			return fmt.Errorf(
-				"%w: current version %s points to %s, expected %s",
-				ErrDigestMismatch,
-				tagReference,
-				actualDigest,
-				img.Digest(),
-			)
-		}
-
-		check.log.Info().
-			Str("digest", actualDigest).
-			Msg("current version digest verification passed")
-	} else {
-		// Warn if no digest provided - show actual digest
-		actualDigest, err := checker.GetTagDigest(tagReference)
-		if err != nil {
-			check.log.Warn().
-				Err(err).
-				Str("version", img.Version()).
-				Msg("failed to retrieve current version digest for verification")
-		} else {
-			check.log.Warn().
-				Str("tag", tagReference).
-				Str("digest", actualDigest).
-				Msgf("⚠ WARNING: No digest verification for %s. Add .Digest(\"%s\") to your Image to enable verification", tagReference, actualDigest)
-		}
-	}
-
-	// Check for updates - variant auto-extracted from version
+	// Check for version updates first
 	info, err := checker.CheckVersion(img.Name(), img.Version(), "")
-	if err != nil {
-		check.log.Error().
-			Err(err).
-			Str("image", img.Name()).
-			Str("version", img.Version()).
-			Msg("failed to check version (skipping update check)")
+	if err == nil && info.UpdateAvailable {
+		// Newer version available - use it
+		v.currentVersion = info.CurrentVersion
+		v.latestVersion = info.LatestVersion
+		v.latestDigest = info.LatestDigest
+		v.updateAvailable = true
 
-		// Mark as executed with no update available - don't fail the entire plan
-		check.currentVersion = img.Version()
-		check.latestVersion = img.Version()
-		check.latestDigest = img.Digest()
-		check.updateAvailable = false
-		check.executed = true
+		v.log.Warn().
+			Str("current", info.CurrentVersion).
+			Str("latest", info.LatestVersion).
+			Str("digest", info.LatestDigest).
+			Msg("⚠ update available")
 
 		return nil
 	}
 
-	// Store results for later retrieval
-	check.currentVersion = info.CurrentVersion
-	check.latestVersion = info.LatestVersion
-	check.latestDigest = info.LatestDigest
-	check.updateAvailable = info.UpdateAvailable
-	check.executed = true
+	// No newer version - check current version digest
+	actualDigest, err := checker.GetDigest(img.tagRef())
+	if err != nil {
+		return fmt.Errorf("failed to get current version digest: %w", err)
+	}
 
-	if info.UpdateAvailable {
-		check.log.Warn().
-			Str("image", img.Name()).
-			Str("current", info.CurrentVersion).
-			Str("latest", info.LatestVersion).
-			Str("digest", info.LatestDigest).
-			Msg("⚠ UPDATE AVAILABLE")
+	expectedDigest := img.Digest()
+	digestMismatch := (expectedDigest != "" && actualDigest != expectedDigest)
+
+	// Fail on digest mismatch unless force mode
+	if digestMismatch && !v.force {
+		v.log.Error().
+			Str("expected", expectedDigest).
+			Str("actual", actualDigest).
+			Str("version", img.Version()).
+			Msg("digest mismatch")
+
+		return fmt.Errorf(
+			"%w: current version %s points to %s, expected %s",
+			ErrDigestMismatch,
+			img.Name(),
+			actualDigest,
+			expectedDigest,
+		)
+	}
+
+	// No version update, set current as latest
+	v.currentVersion = img.Version()
+	v.latestVersion = img.Version()
+	v.latestDigest = actualDigest
+	v.updateAvailable = (v.force && (digestMismatch || expectedDigest == ""))
+
+	if v.updateAvailable {
+		v.log.Warn().
+			Str("version", v.currentVersion).
+			Str("digest", v.latestDigest).
+			Msg("⚠ digest update (force mode)")
 	} else {
-		check.log.Info().
-			Str("tag", tagReference).
-			Msg("✓ Up to date")
+		v.log.Info().
+			Str("version", v.currentVersion).
+			Str("digest", v.latestDigest).
+			Msg("✓ up to date")
 	}
 
 	return nil
 }
 
-// CurrentVersion returns the current version that was checked.
-// Only valid after plan execution.
-func (check *VersionCheck) CurrentVersion() string {
-	return check.currentVersion
-}
-
-// LatestVersion returns the latest available version.
-// Only valid after plan execution.
-func (check *VersionCheck) LatestVersion() string {
-	return check.latestVersion
-}
-
-// LatestDigest returns the digest of the latest version.
-// Only valid after plan execution.
-func (check *VersionCheck) LatestDigest() string {
-	return check.latestDigest
-}
-
-// UpdateAvailable returns whether an update is available.
-// Only valid after plan execution.
-func (check *VersionCheck) UpdateAvailable() bool {
-	return check.updateAvailable
-}
-
-// Executed returns whether the version check has been executed.
-func (check *VersionCheck) Executed() bool {
-	return check.executed
-}
-
 // operationName returns the version check operation name (implements operation interface).
-func (check *VersionCheck) operationName() string {
-	return check.opName
+func (v *versionCheckOp) operationName() string {
+	return v.opName
 }

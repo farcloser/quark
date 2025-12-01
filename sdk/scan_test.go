@@ -8,68 +8,68 @@ import (
 )
 
 // - Timeout is optional.
-func TestScanBuilder_Build(t *testing.T) {
+func TestNewScan(t *testing.T) {
 	t.Parallel()
 
-	sourceImage, err := sdk.NewImage("alpine").
-		Version("3.20").
-		Digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").
-		Build()
+	sourceImage, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "alpine",
+		Version: "3.20",
+		Digest:  "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	})
 	if err != nil {
 		t.Fatalf("Failed to create test source image: %v", err)
 	}
 
 	tests := []struct {
 		name    string
-		build   func(*sdk.Plan) (*sdk.Scan, error)
+		args    *sdk.ScanArgs
 		wantErr error
 	}{
 		{
 			name: "valid scan with just source",
-			build: func(plan *sdk.Plan) (*sdk.Scan, error) {
-				return plan.Scan("test-scan").
-					Source(sourceImage).
-					Build()
+			args: &sdk.ScanArgs{
+				Description: "test-scan",
+				Source:      sourceImage,
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid scan with explicit severity",
-			build: func(plan *sdk.Plan) (*sdk.Scan, error) {
-				return plan.Scan("test-scan-severity").
-					Source(sourceImage).
-					Severity(sdk.SeverityCritical).
-					Build()
+			args: &sdk.ScanArgs{
+				Description: "test-scan-severity",
+				Source:      sourceImage,
+				SeverityChecks: []sdk.ScanSeverityCheck{
+					{Threshold: sdk.SeverityCritical, Action: sdk.ActionError},
+				},
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid scan with multiple severities",
-			build: func(plan *sdk.Plan) (*sdk.Scan, error) {
-				return plan.Scan("test-scan-multi").
-					Source(sourceImage).
-					Severity(sdk.SeverityCritical, sdk.ActionError).
-					Severity(sdk.SeverityHigh, sdk.ActionWarn).
-					Severity(sdk.SeverityMedium, sdk.ActionInfo).
-					Build()
+			args: &sdk.ScanArgs{
+				Description: "test-scan-multi",
+				Source:      sourceImage,
+				SeverityChecks: []sdk.ScanSeverityCheck{
+					{Threshold: sdk.SeverityCritical, Action: sdk.ActionError},
+					{Threshold: sdk.SeverityHigh, Action: sdk.ActionWarn},
+					{Threshold: sdk.SeverityMedium, Action: sdk.ActionInfo},
+				},
 			},
 			wantErr: nil,
 		},
 		{
 			name: "valid scan with format",
-			build: func(plan *sdk.Plan) (*sdk.Scan, error) {
-				return plan.Scan("test-scan-format").
-					Source(sourceImage).
-					Format(sdk.FormatJSON).
-					Build()
+			args: &sdk.ScanArgs{
+				Description: "test-scan-format",
+				Source:      sourceImage,
+				Format:      sdk.FormatJSON,
 			},
 			wantErr: nil,
 		},
 		{
 			name: "missing source image",
-			build: func(plan *sdk.Plan) (*sdk.Scan, error) {
-				return plan.Scan("test-scan-no-source").
-					Build()
+			args: &sdk.ScanArgs{
+				Description: "test-scan-no-source",
 			},
 			wantErr: sdk.ErrScanImageRequired,
 		},
@@ -80,30 +80,30 @@ func TestScanBuilder_Build(t *testing.T) {
 			t.Parallel()
 
 			plan := sdk.NewPlan("test-plan")
-			scan, err := tt.build(plan)
+			scan, err := plan.Scan(tt.args)
 
 			if tt.wantErr != nil {
 				if err == nil {
-					t.Errorf("Build() error = nil, wantErr %v", tt.wantErr)
+					t.Errorf("Scan() error = nil, wantErr %v", tt.wantErr)
 
 					return
 				}
 
 				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("Build() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("Scan() error = %v, wantErr %v", err, tt.wantErr)
 				}
 
 				return
 			}
 
 			if err != nil {
-				t.Errorf("Build() unexpected error = %v", err)
+				t.Errorf("Scan() unexpected error = %v", err)
 
 				return
 			}
 
 			if scan == nil {
-				t.Error("Build() returned nil scan with nil error")
+				t.Error("Scan() returned nil scan with nil error")
 			}
 		})
 	}

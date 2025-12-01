@@ -14,6 +14,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/farcloser/quark/sdk"
+	"github.com/farcloser/quark/sdk/logger"
+	"github.com/farcloser/quark/sdk/secrets"
 )
 
 // Example demonstrates retrieving GHCR credentials from 1Password and using them
@@ -71,12 +73,12 @@ import (
 //	          ./your-app
 func main() {
 	ctx := context.Background()
-	sdk.ConfigureDefaultLogger(ctx)
+	logger.ConfigureWithDefaults(ctx)
 
 	// OPTIONAL: Pre-authenticate with 1Password to avoid multiple biometric prompts
-	// This is useful if you'll make multiple GetSecret calls in parallel
+	// This is useful if you'll make multiple Get calls in parallel
 	// In CI/CD with service accounts, this is a no-op (already authenticated via token)
-	if err := sdk.AuthenticateOp(ctx); err != nil {
+	if err := secrets.AuthenticateOp(ctx); err != nil {
 		log.Fatal().Err(err).Msg("failed to authenticate with 1Password")
 	}
 
@@ -85,7 +87,7 @@ func main() {
 	// Retrieve credentials from 1Password
 	// Reference format: op://vault/item
 	// This retrieves multiple fields in a single API call (efficient)
-	credentials, err := sdk.GetSecret(
+	credentials, err := secrets.Get(
 		ctx,
 		"op://Security/ghcr-credentials",
 		[]string{"username", "password"},
@@ -121,12 +123,11 @@ func main() {
 	plan := sdk.NewPlan("1password-example")
 
 	// Configure GHCR (GitHub Container Registry) with credentials from 1Password
-	if _, err := plan.Registry("ghcr.io").
-		Username(username).
-		Password(password).
-		Build(); err != nil {
-		log.Fatal().Err(err).Msg("failed to create registry")
-	}
+	plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
+		Domain:   "ghcr.io",
+		Username: username,
+		Token:    password,
+	}))
 
 	log.Info().
 		Str("registry", "ghcr.io").
@@ -134,10 +135,11 @@ func main() {
 
 	// Example: Create an image reference that will use these credentials
 	// This demonstrates that the credentials are working
-	image, err := sdk.NewImage("my-org/my-app").
-		Domain("ghcr.io").
-		Version("latest").
-		Build()
+	image, err := sdk.NewImage(&sdk.ImageOpts{
+		Name:    "my-org/my-app",
+		Domain:  "ghcr.io",
+		Version: "latest",
+	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create image reference")
 	}
@@ -153,10 +155,13 @@ func main() {
 	// Example operations you could add:
 	//
 	//   // Version check
-	//   plan.VersionCheck("check").Image(image).Build()
+	//   plan.CheckVersion("check", image, false)
 	//
 	//   // Scan image for vulnerabilities
-	//   plan.Scan("scan").Image(image).Build()
+	//   plan.Scan(&sdk.ScanArgs{
+	//       Description: "scan",
+	//       Source:      image,
+	//   })
 	//
 	//   // Execute plan
 	//   if err := plan.Execute(ctx); err != nil {

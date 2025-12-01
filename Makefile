@@ -44,7 +44,7 @@ help:
 # Tasks
 lint: lint-go-all lint-commits lint-mod lint-licenses-all lint-headers lint-yaml lint-shell ## Lint project
 
-fix: fix-mod fix-go-all ## Automatically fix some issues
+fix: fix-go-all fix-mod ## Automatically fix some issues
 
 test: unit ## Run all tests
 
@@ -108,6 +108,8 @@ lint-licenses:
 	@cd $(MAKEFILE_DIR) \
 		&& go-licenses check --include_tests --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,MPL-2.0 \
 		  --ignore gotest.tools \
+		  --ignore github.com/in-toto \
+		  --ignore github.com/cyberphone/json-canonicalization \
 		  ./...
 	$(call footer, $@)
 

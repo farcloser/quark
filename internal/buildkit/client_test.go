@@ -96,6 +96,10 @@ func (*mockSSHConnection) ExecuteStreaming(_ string, _, _ io.Writer) error {
 	return nil
 }
 
+func (*mockSSHConnection) ExecuteWithStdin(_ string, _ []byte) error {
+	return nil
+}
+
 func (*mockSSHConnection) UploadFile(_, _ string) error {
 	return nil
 }

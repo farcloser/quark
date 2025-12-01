@@ -13,7 +13,7 @@ package sdk
 //	}
 //	registryOrg := secrets["organization"]
 //	registryUser := secrets["username"]
-//	registryPass := secrets["password"]
+//	registryPass := secrets["token"]
 //	registryDomain := secrets["domain"]
 //
 // Retrieves the entire item once and extracts the requested fields efficiently.

@@ -8,22 +8,6 @@ import (
 
 // Secret reference errors (re-exported from internal/secrets for backward compatibility).
 var (
-	// ErrDocumentReferenceEmpty indicates document reference is empty.
-	// Deprecated: Use ErrReferenceEmpty for new code.
-	ErrDocumentReferenceEmpty = secrets.ErrReferenceEmpty
-
-	// ErrDocumentReferenceInvalidPrefix indicates document reference has invalid scheme.
-	// Deprecated: Use ErrReferenceInvalidFormat for new code.
-	ErrDocumentReferenceInvalidPrefix = secrets.ErrReferenceInvalidFormat
-
-	// ErrDocumentReferenceInvalidFormat indicates document reference has invalid format.
-	// Deprecated: Use ErrReferenceInvalidFormat for new code.
-	ErrDocumentReferenceInvalidFormat = secrets.ErrReferenceInvalidFormat
-
-	// ErrDocumentReferenceEmptyParts indicates document reference has empty required parts.
-	// Deprecated: Use ErrReferenceEmptyParts for new code.
-	ErrDocumentReferenceEmptyParts = secrets.ErrReferenceEmptyParts
-
 	// ErrDocumentEmpty indicates document resolved to empty content.
 	ErrDocumentEmpty = secrets.ErrDocumentEmpty
 
@@ -41,12 +25,6 @@ var (
 
 	// ErrFieldNotFound indicates requested field not found in secret.
 	ErrFieldNotFound = secrets.ErrFieldNotFound
-)
-
-// Builder errors.
-var (
-	// ErrBuilderAlreadyUsed indicates a builder has been used and cannot be reused.
-	ErrBuilderAlreadyUsed = errors.New("builder has already been used; create a new builder for each operation")
 )
 
 // Build errors.
@@ -80,6 +58,9 @@ var (
 
 	// ErrVersionCheckVersionRequired indicates version check image must have version specified.
 	ErrVersionCheckVersionRequired = errors.New("version check image must have version specified")
+
+	// ErrVersionCheckLatestNotSupported indicates version check does not support "latest" tag.
+	ErrVersionCheckLatestNotSupported = errors.New("version check not supported for 'latest' tag")
 )
 
 // Image errors.
@@ -163,4 +144,28 @@ var (
 var (
 	// ErrInvalidAuditRuleSet indicates an invalid audit rule set value.
 	ErrInvalidAuditRuleSet = errors.New("invalid audit rule set")
+)
+
+// Signature verification errors.
+var (
+	// ErrNoTrustPolicy indicates no trust policy is configured (no global signers and no per-image SignedBy).
+	ErrNoTrustPolicy = errors.New("no trust policy configured: add TrustSigner to plan or SignedBy to image")
+
+	// ErrImageNotSigned indicates no signature artifact was found for the image.
+	ErrImageNotSigned = errors.New("image is not signed")
+
+	// ErrSignatureInvalid indicates the signature failed cryptographic verification.
+	ErrSignatureInvalid = errors.New("signature verification failed")
+
+	// ErrSignerNotTrusted indicates the signer identity does not match any trusted signer.
+	ErrSignerNotTrusted = errors.New("signer not trusted")
+
+	// ErrSignatureDigestMismatch indicates the signature is over a different digest than expected.
+	ErrSignatureDigestMismatch = errors.New("signature digest mismatch")
+
+	// ErrMustSpecifyTagOrDigest indicates neither tag nor digest was provided.
+	ErrMustSpecifyTagOrDigest = errors.New("must specify at least tag or digest")
+
+	// ErrTagDrift indicates the tag resolves to a different digest than expected.
+	ErrTagDrift = errors.New("tag drift detected")
 )

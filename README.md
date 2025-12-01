@@ -181,18 +181,17 @@ func main() {
     plan := sdk.NewPlan("my-pipeline")
 
     // Create image reference
-    image, err := sdk.NewImage("library/alpine").
-        Domain("docker.io").
-        Version("3.20").
-        Build()
+    image, err := sdk.NewImage(&sdk.ImageArgs{
+        Name:    "library/alpine",
+        Domain:  "docker.io",
+        Version: "3.20",
+    })
     if err != nil {
         log.Fatal().Err(err).Msg("Failed to create image")
     }
 
     // Check for new versions
-    if _, err := plan.VersionCheck("check-alpine").
-        Source(image).
-        Build(); err != nil {
+    if _, err := plan.CheckVersion("check-alpine", image, false); err != nil {
         log.Fatal().Err(err).Msg("Failed to create version check")
     }
 
@@ -217,8 +216,8 @@ quark execute -p ./plans/           # Execute directory containing main.go
 
 Registries are stored in the plan by domain and automatically looked up when needed:
 
-1. **Register credentials once** with `plan.Registry(domain)`
-2. **Create images** with `sdk.NewImage(name).Domain(domain)`
+1. **Register credentials once** with `plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryArgs{...}))`
+2. **Create images** with `sdk.NewImage(&sdk.ImageArgs{...})`
 3. **Operations automatically find credentials** by matching image domain to registered registry
 
 This eliminates passing registry objects everywhere and makes the API cleaner.
@@ -228,6 +227,43 @@ This eliminates passing registry objects everywhere and makes the API cleaner.
 - Empty domain `""` normalizes to `"docker.io"` (Docker Hub default)
 - Explicit domains like `"ghcr.io"`, `"quay.io"` used as-is
 - Registry lookup uses normalized domains for consistency
+
+### Handles and Dependencies
+
+All plan operations return a `*Handle` that can be used to:
+- Define dependencies between operations with `After()`
+- Chain additional operations
+- Access operation results after execution
+
+```go
+// Operations return handles
+syncHandle, err := plan.Sync(&sdk.SyncArgs{...})
+scanHandle, err := plan.Scan(&sdk.ScanArgs{...})
+
+// Define dependencies - scan runs after sync completes
+scanHandle.After(syncHandle)
+
+// Chain operations fluently
+syncHandle, _ := plan.Sync(&sdk.SyncArgs{...})
+scanHandle, _ := syncHandle.Scan(&sdk.ScanArgs{...})  // Automatically depends on sync
+```
+
+**Parallel Execution:**
+
+Operations without dependencies execute in parallel. The plan uses a DAG (Directed Acyclic Graph) to determine execution order:
+
+```go
+// These run in parallel (no dependencies)
+checkA, _ := plan.CheckVersion("check-a", imageA, false)
+checkB, _ := plan.CheckVersion("check-b", imageB, false)
+
+// This waits for both checks to complete
+sync, _ := plan.Sync(&sdk.SyncArgs{...})
+sync.After(checkA, checkB)
+
+// This runs after sync
+scan, _ := sync.Scan(&sdk.ScanArgs{...})
+```
 
 ### Digest-Based Security
 
@@ -243,7 +279,7 @@ This eliminates passing registry objects everywhere and makes the API cleaner.
 3. **Digest-First Security**: Always verify content by digest, never trust tags alone
 4. **Type-Safe Configuration**: Plans are Go programs with compile-time validation
 5. **Idempotent Operations**: Digest-based change detection prevents unnecessary work
-6. **Builder Pattern**: Fluent, readable API inspired by Hadron
+6. **Args Pattern**: Clear, struct-based API for all operations
 7. **SSH-Based Security**: BuildKit nodes accessed via SSH agent (no keys in code)
 8. **Defense in Depth**: Destination digests computed locally, not from registry
 
@@ -255,22 +291,24 @@ Registries are stored in the plan and automatically looked up by domain:
 
 ```go
 // Register Docker Hub credentials
-plan.Registry("docker.io").
-    Username("myuser").
-    Password("mytoken").
-    Build()
+plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryArgs{
+    Domain:   "docker.io",
+    Username: "myuser",
+    Token:    "mytoken",
+}))
 
 // Register GHCR credentials
-plan.Registry("ghcr.io").
-    Username("myorg").
-    Password("ghp_token").
-    Build()
+plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryArgs{
+    Domain:   "ghcr.io",
+    Username: "myorg",
+    Token:    "ghp_token",
+}))
 
 // Empty domain normalizes to "docker.io"
-plan.Registry("").
-    Username("myuser").
-    Password("mytoken").
-    Build()
+plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryArgs{
+    Username: "myuser",
+    Token:    "mytoken",
+}))
 ```
 
 When you create images with domains, the plan automatically uses the correct credentials.
@@ -281,20 +319,22 @@ Create typed image references with domain, name, version, and optional digest:
 
 ```go
 // Source image (for sync - requires digest)
-sourceImage, err := sdk.NewImage("timberio/vector").
-    Domain("docker.io").
-    Version("0.40.0-distroless-static").
-    Digest("sha256:abc123...").
-    Build()
+sourceImage, err := sdk.NewImage(&sdk.ImageArgs{
+    Name:    "timberio/vector",
+    Domain:  "docker.io",
+    Version: "0.40.0-distroless-static",
+    Digest:  "sha256:abc123...",
+})
 if err != nil {
     log.Fatal().Err(err).Msg("Failed to create source image")
 }
 
 // Destination image (digest populated after sync)
-destImage, err := sdk.NewImage("my-org/vector").
-    Domain("ghcr.io").
-    Version("v0").
-    Build()
+destImage, err := sdk.NewImage(&sdk.ImageArgs{
+    Name:    "my-org/vector",
+    Domain:  "ghcr.io",
+    Version: "v0",
+})
 if err != nil {
     log.Fatal().Err(err).Msg("Failed to create destination image")
 }
@@ -311,18 +351,24 @@ if err != nil {
 Copy images between registries with digest verification:
 
 ```go
-if _, err := plan.Sync("sync-vector").
-    Source(sourceImage).      // Must have digest
-    Destination(destImage).   // Domain used for registry lookup
-    Build(); err != nil {
+syncHandle, err := plan.Sync(&sdk.SyncArgs{
+    Description: "sync-vector",
+    Source:      sourceImage,      // Must have digest
+    Destination: destImage,        // Domain used for registry lookup
+})
+if err != nil {
     log.Fatal().Err(err).Msg("Failed to create sync operation")
 }
+
+// After plan execution, access the destination digest
+plan.Execute(ctx)
+fmt.Println("Destination digest:", destImage.Digest())
 ```
 
 **Features:**
 - Source image MUST have digest specified (security requirement)
 - Registry credentials automatically looked up by image domain
-- Returns destination image with locally-computed digest after execution
+- Destination digest computed locally (defense in depth against compromised registries)
 - Multi-platform images (amd64/arm64) automatically handled
 - Creates manifest lists for multi-platform images
 - Only linux/amd64 and linux/arm64 platforms are synced
@@ -332,12 +378,37 @@ if _, err := plan.Sync("sync-vector").
 Check for new image versions in upstream registries:
 
 ```go
-if _, err := plan.VersionCheck("check-alpine").
-    Source(sourceImage).  // Checks for newer versions
-    Build(); err != nil {
+// Check for newer versions (fail on digest mismatch)
+checkHandle, err := plan.CheckVersion("check-alpine", sourceImage, false)
+if err != nil {
     log.Fatal().Err(err).Msg("Failed to create version check")
 }
+
+// Force mode: warn on digest mismatch instead of failing
+forceHandle, err := plan.CheckVersion("check-alpine-force", sourceImage, true)
+if err != nil {
+    log.Fatal().Err(err).Msg("Failed to create version check")
+}
+
+// After plan execution, access the result
+plan.Execute(ctx)
+result := checkHandle.VersionCheckResult()
+if result.UpdateAvailable {
+    fmt.Printf("Update available: %s -> %s\n", result.CurrentVersion, result.LatestVersion)
+    fmt.Printf("Latest digest: %s\n", result.LatestDigest)
+}
 ```
+
+**Parameters:**
+- `name` - Operation name for logging
+- `source` - Image to check for updates
+- `force` - If true, digest mismatches are warnings instead of errors
+
+**VersionCheckResult Fields:**
+- `CurrentVersion` - The version that was checked
+- `LatestVersion` - The latest available version
+- `LatestDigest` - The digest of the latest version
+- `UpdateAvailable` - Whether an update is available
 
 **Features:**
 - Reports if update is available
@@ -351,13 +422,16 @@ if _, err := plan.VersionCheck("check-alpine").
 Scan images for vulnerabilities using Trivy:
 
 ```go
-if _, err := plan.Scan("scan-alpine").
-    Source(destImage).
-    Severity(sdk.SeverityCritical, sdk.ActionError).
-    Severity(sdk.SeverityHigh, sdk.ActionWarn).
-    Severity(sdk.SeverityMedium, sdk.ActionInfo).
-    Format(sdk.FormatTable).  // or FormatJSON, FormatSARIF
-    Build(); err != nil {
+if _, err := plan.Scan(&sdk.ScanArgs{
+    Description: "scan-alpine",
+    Source:      destImage,
+    SeverityChecks: []sdk.ScanSeverityCheck{
+        {Threshold: sdk.SeverityCritical, Action: sdk.ActionError},
+        {Threshold: sdk.SeverityHigh, Action: sdk.ActionWarn},
+        {Threshold: sdk.SeverityMedium, Action: sdk.ActionInfo},
+    },
+    Format: sdk.FormatTable,  // or FormatJSON, FormatSARIF
+}); err != nil {
     log.Fatal().Err(err).Msg("Failed to create scan operation")
 }
 ```
@@ -390,27 +464,30 @@ Audit Dockerfiles and images for best practices:
 
 ```go
 // Audit both Dockerfile and image
-if _, err := plan.Audit("audit-complete").
-    Dockerfile("./Dockerfile").       // godolint SDK
-    Source(destImage).                // dockle
-    RuleSet(sdk.RuleSetStrict).
-    IgnoreChecks("CIS-DI-0005", "CIS-DI-0006").
-    Build(); err != nil {
+if _, err := plan.Audit(&sdk.AuditArgs{
+    Description:  "audit-complete",
+    Dockerfile:   "./Dockerfile",       // godolint SDK
+    Source:       destImage,            // dockle
+    RuleSet:      sdk.RuleSetStrict,
+    IgnoreChecks: []string{"CIS-DI-0005", "CIS-DI-0006"},
+}); err != nil {
     log.Fatal().Err(err).Msg("Failed to create audit operation")
 }
 
 // Audit Dockerfile only
-if _, err := plan.Audit("audit-dockerfile").
-    Dockerfile("./Dockerfile").
-    Build(); err != nil {
+if _, err := plan.Audit(&sdk.AuditArgs{
+    Description: "audit-dockerfile",
+    Dockerfile:  "./Dockerfile",
+}); err != nil {
     log.Fatal().Err(err).Msg("Failed to create dockerfile audit")
 }
 
 // Audit image only
-if _, err := plan.Audit("audit-image").
-    Source(destImage).
-    RuleSet(sdk.RuleSetRecommended).
-    Build(); err != nil {
+if _, err := plan.Audit(&sdk.AuditArgs{
+    Description: "audit-image",
+    Source:      destImage,
+    RuleSet:     sdk.RuleSetRecommended,
+}); err != nil {
     log.Fatal().Err(err).Msg("Failed to create image audit")
 }
 ```
@@ -439,39 +516,45 @@ Build multi-platform container images using remote BuildKit nodes:
 
 ```go
 // Define BuildKit nodes (one per platform)
-nodeAMD64, err := plan.BuildNode("build-amd64").
-    Endpoint("build-amd64.example.com").
-    Platform(sdk.PlatformAMD64).
-    Build()
+nodeAMD64, err := sdk.NewBuildNode(&sdk.BuildNodeArgs{
+    Name:     "build-amd64",
+    Endpoint: "build-amd64.example.com",
+    Platform: sdk.PlatformAMD64,
+})
 if err != nil {
     log.Fatal().Err(err).Msg("Failed to create amd64 build node")
 }
+plan.AddBuildNode(nodeAMD64)
 
-nodeARM64, err := plan.BuildNode("build-arm64").
-    Endpoint("build-arm64.example.com").
-    Platform(sdk.PlatformARM64).
-    Build()
+nodeARM64, err := sdk.NewBuildNode(&sdk.BuildNodeArgs{
+    Name:     "build-arm64",
+    Endpoint: "build-arm64.example.com",
+    Platform: sdk.PlatformARM64,
+})
 if err != nil {
     log.Fatal().Err(err).Msg("Failed to create arm64 build node")
 }
+plan.AddBuildNode(nodeARM64)
 
 // Or use SSH config alias as the endpoint
-nodeLocal, err := plan.BuildNode("local-builder").
-    Endpoint("local-builder").  // SSH config alias from ~/.ssh/config
-    Platform(sdk.PlatformAMD64).
-    Build()
+nodeLocal, err := sdk.NewBuildNode(&sdk.BuildNodeArgs{
+    Name:     "local-builder",
+    Endpoint: "local-builder",  // SSH config alias from ~/.ssh/config
+    Platform: sdk.PlatformAMD64,
+})
 if err != nil {
     log.Fatal().Err(err).Msg("Failed to create local build node")
 }
+plan.AddBuildNode(nodeLocal)
 
 // Build multi-platform image
-if _, err := plan.Build("build-app").
-    Context("./docker").
-    Dockerfile("Dockerfile").           // optional, defaults to Context/Dockerfile
-    Node(nodeAMD64).
-    Node(nodeARM64).
-    Tag("ghcr.io/org/app:v1.0").
-    Build(); err != nil {
+if _, err := plan.Build(&sdk.BuildArgs{
+    Name:       "build-app",
+    Context:    "./docker",
+    Dockerfile: "Dockerfile",  // optional, defaults to "Dockerfile"
+    Nodes:      []*sdk.BuildNode{nodeAMD64, nodeARM64},
+    Tag:        "ghcr.io/org/app:v1.0",
+}); err != nil {
     log.Fatal().Err(err).Msg("Failed to create build operation")
 }
 ```
@@ -502,10 +585,11 @@ if err != nil {
 }
 
 // Use retrieved credentials
-plan.Registry(credentials["domain"]).
-    Username(credentials["username"]).
-    Password(credentials["password"]).
-    Build()
+plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryArgs{
+    Domain:   credentials["domain"],
+    Username: credentials["username"],
+    Token:    credentials["password"],
+}))
 
 // Retrieve document (like SSH key or kubeconfig)
 sshKey, err := sdk.GetSecretDocument(ctx, "op://Security/deploy-key")
@@ -622,10 +706,13 @@ quark execute -p main.go
 
 ### Concurrency
 
-There is no thread safety guarantees.
-Plan building (adding operations, registries, nodes) is not thread-safe.
-You should build your plan in a single goroutine, then execute it.
-Plan execution is safe and operations run sequentially.
+**Plan Building:** Not thread-safe. Build your plan in a single goroutine, then execute it.
+
+**Plan Execution:** Operations execute in parallel where dependencies allow. The plan uses a DAG
+(Directed Acyclic Graph) to determine execution order:
+- Operations with no dependencies run immediately in parallel
+- Operations with dependencies wait for all dependencies to complete
+- Use `After()` or chaining to define dependencies between operations
 
 ### NOT to be used with untrusted input
 

@@ -63,8 +63,18 @@ func (r *AuditRuleSet) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Audit represents a Dockerfile and image quality audit.
-type Audit struct {
+// AuditArgs contains configuration options for creating an audit operation.
+type AuditArgs struct {
+	Description  string        // Required - operation name
+	Dockerfile   string        // Optional - Dockerfile path (one of Dockerfile or Source required)
+	Source       *Image        // Optional - image to audit
+	RuleSet      AuditRuleSet  // Optional - rule set (default: strict)
+	IgnoreChecks []string      // Optional - checks to ignore
+	Timeout      time.Duration // Optional - operation timeout
+}
+
+// auditOp represents a Dockerfile and image quality audit.
+type auditOp struct {
 	opName       string
 	dockerfile   string
 	image        *Image
@@ -75,131 +85,56 @@ type Audit struct {
 	log          zerolog.Logger
 }
 
-// AuditBuilder builds an Audit.
-type AuditBuilder struct {
-	plan  *Plan
-	audit *Audit
-	built bool
-}
-
-// Dockerfile sets the Dockerfile path to audit.
-func (builder *AuditBuilder) Dockerfile(dockerfile string) *AuditBuilder {
-	builder.audit.dockerfile = dockerfile
-
-	return builder
-}
-
-// Source sets the image to audit.
-// Registry credentials are looked up from the plan's registry collection using the image domain.
-// If no registry is found, anonymous access will be used.
-func (builder *AuditBuilder) Source(image *Image) *AuditBuilder {
-	builder.audit.image = image
-	builder.audit.registry = builder.plan.getRegistry(image.Domain())
-
-	return builder
-}
-
-// RuleSet sets the rule set severity.
-func (builder *AuditBuilder) RuleSet(ruleSet AuditRuleSet) *AuditBuilder {
-	builder.audit.ruleSet = ruleSet
-
-	return builder
-}
-
-// IgnoreChecks sets specific Dockle checks to ignore (e.g., "DKL-DI-0005").
-func (builder *AuditBuilder) IgnoreChecks(checks ...string) *AuditBuilder {
-	builder.audit.ignoreChecks = append(builder.audit.ignoreChecks, checks...)
-
-	return builder
-}
-
-// Timeout sets the operation timeout.
-// If not set, the operation will use the context timeout from Plan.Execute().
-func (builder *AuditBuilder) Timeout(duration time.Duration) *AuditBuilder {
-	builder.audit.timeout = duration
-
-	return builder
-}
-
-// Build validates and adds the audit to the plan.
-// The builder becomes unusable after Build() is called.
-// Create a new builder for each operation.
-func (builder *AuditBuilder) Build() (*Audit, error) {
-	if builder.built {
-		return nil, ErrBuilderAlreadyUsed
-	}
-
-	builder.built = true
-
-	if builder.audit.dockerfile == "" && builder.audit.image == nil {
-		return nil, ErrAuditSourceRequired
-	}
-
-	if builder.audit.ruleSet == (AuditRuleSet{}) {
-		builder.audit.ruleSet = RuleSetStrict
-	}
-
-	builder.plan.audits = append(builder.plan.audits, builder.audit)
-	builder.plan.operations = append(builder.plan.operations, builder.audit)
-
-	return builder.audit, nil
-}
-
-func (auditJob *Audit) execute(ctx context.Context) error {
+func (a *auditOp) execute(ctx context.Context) error {
 	// Apply timeout if configured
-	if auditJob.timeout > 0 {
+	if a.timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, auditJob.timeout)
+		ctx, cancel = context.WithTimeout(ctx, a.timeout)
 		defer cancel()
 	}
 
 	var imageRef string
 
-	if auditJob.image != nil {
-		ref, err := auditJob.image.tagRef()
-		if err != nil {
-			return fmt.Errorf("failed to build image reference: %w", err)
-		}
-
-		imageRef = ref
+	if a.image != nil {
+		imageRef = a.image.tagRef()
 	}
 
-	auditJob.log.Info().
-		Str("dockerfile", auditJob.dockerfile).
+	a.log.Info().
+		Str("dockerfile", a.dockerfile).
 		Str("image", imageRef).
-		Str("ruleset", auditJob.ruleSet.String()).
+		Str("ruleset", a.ruleSet.String()).
 		Msg("auditing")
 
-	auditor := audit.NewAuditor(auditJob.log)
+	auditor := audit.NewAuditor(a.log)
 	allPassed := true
 
 	// Audit Dockerfile if provided
-	if auditJob.dockerfile != "" {
-		result, err := auditor.AuditDockerfile(ctx, auditJob.dockerfile)
+	if a.dockerfile != "" {
+		result, err := auditor.AuditDockerfile(ctx, a.dockerfile)
 		if err != nil {
 			return fmt.Errorf("failed to audit Dockerfile: %w", err)
 		}
 
 		if result.Passed {
-			auditJob.log.Info().Msg(result.Output)
+			a.log.Info().Msg(result.Output)
 		} else {
-			auditJob.log.Warn().Msg(result.Output)
+			a.log.Warn().Msg(result.Output)
 
 			allPassed = false
 		}
 	}
 
 	// Audit image if provided
-	if auditJob.image != nil {
+	if a.image != nil {
 		opts := audit.ImageAuditOptions{
-			RuleSet:      auditJob.ruleSet.String(),
-			IgnoreChecks: auditJob.ignoreChecks,
+			RuleSet:      a.ruleSet.String(),
+			IgnoreChecks: a.ignoreChecks,
 		}
 
-		if auditJob.registry != nil {
-			opts.RegistryHost = auditJob.registry.host
-			opts.Username = auditJob.registry.username
-			opts.Password = auditJob.registry.password
+		if a.registry != nil {
+			opts.RegistryHost = a.registry.domain
+			opts.Username = a.registry.username
+			opts.Password = a.registry.token
 		}
 
 		result, err := auditor.AuditImage(ctx, imageRef, opts)
@@ -208,9 +143,9 @@ func (auditJob *Audit) execute(ctx context.Context) error {
 		}
 
 		if result.Passed {
-			auditJob.log.Info().Msg(result.Output)
+			a.log.Info().Msg(result.Output)
 		} else {
-			auditJob.log.Warn().Msg(result.Output)
+			a.log.Warn().Msg(result.Output)
 
 			allPassed = false
 		}
@@ -220,12 +155,12 @@ func (auditJob *Audit) execute(ctx context.Context) error {
 		return ErrAuditFoundIssues
 	}
 
-	auditJob.log.Info().Msg("audit passed")
+	a.log.Info().Msg("audit passed")
 
 	return nil
 }
 
 // operationName returns the audit operation name (implements operation interface).
-func (auditJob *Audit) operationName() string {
-	return auditJob.opName
+func (a *auditOp) operationName() string {
+	return a.opName
 }

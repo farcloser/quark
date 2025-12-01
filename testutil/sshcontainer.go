@@ -12,7 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/farcloser/quark/filesystem"
+	"github.com/farcloser/quark/sdk/filesystem"
 	"github.com/farcloser/quark/ssh"
 )
 

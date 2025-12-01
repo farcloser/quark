@@ -7,8 +7,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/farcloser/quark/filesystem"
 	"github.com/farcloser/quark/internal/audit"
+	"github.com/farcloser/quark/sdk/filesystem"
 )
 
 // INTENTION: NewAuditor should create a valid auditor.
