@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -70,8 +71,15 @@ func (b *build) execute(ctx context.Context) error {
 	// Create buildkit client
 	bkClient := buildkit.NewClient(sshClient, b.log)
 
+	// Create unique remote directory for build context
+	remotePathRaw, _, err := sshClient.Execute("mktemp -d -t quark-build-XXXXXX")
+	if err != nil {
+		return fmt.Errorf("failed to create remote build directory: %w", err)
+	}
+
+	remotePath := strings.TrimSpace(remotePathRaw)
+
 	// Upload build context
-	remotePath := "/tmp/quark-build-" + b.opName
 	if err := bkClient.UploadContext(ctx, b.context, remotePath); err != nil {
 		return fmt.Errorf("failed to upload build context: %w", err)
 	}

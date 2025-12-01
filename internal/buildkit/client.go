@@ -194,7 +194,13 @@ func uploadDirectory(ctx context.Context, sshConn ssh.Connection, localDir, remo
 		remotePath := fmt.Sprintf("%s/%s", remoteDir, entry.Name())
 
 		if entry.IsDir() {
-			// Recursively upload directory
+			// Create remote directory before recursing
+			mkdirCmd := "mkdir -p " + shlex.Join([]string{remotePath})
+			if _, _, err := sshConn.Execute(mkdirCmd); err != nil {
+				return fmt.Errorf("failed to create remote directory %s: %w", remotePath, err)
+			}
+
+			// Recursively upload directory contents
 			if err := uploadDirectory(ctx, sshConn, localPath, remotePath); err != nil {
 				return err
 			}

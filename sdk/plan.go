@@ -331,7 +331,7 @@ func (plan *Plan) Scan(args *ScanArgs) (*Handle, error) {
 	}
 
 	format := args.Format
-	if format == (ScanFormat{}) {
+	if format == nil {
 		format = FormatTable
 	}
 

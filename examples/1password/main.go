@@ -89,8 +89,8 @@ func main() {
 	// This retrieves multiple fields in a single API call (efficient)
 	credentials, err := secrets.Get(
 		ctx,
-		"op://Security/ghcr-credentials",
-		[]string{"username", "password"},
+		"op://Homecore/docker.ro",
+		[]string{"username", "token"},
 	)
 	// Handle specific 1Password errors
 	if err != nil {
@@ -107,13 +107,13 @@ func main() {
 		default:
 			// Generic error - likely authentication issue or item not found
 			log.Fatal().Err(err).
-				Str("reference", "op://Security/ghcr-credentials").
+				Str("reference", "op://Homecore/docker.ro").
 				Msg("failed to retrieve credentials from 1Password (check authentication and item exists)")
 		}
 	}
 
 	username := credentials["username"]
-	password := credentials["password"]
+	password := credentials["token"]
 
 	log.Info().
 		Str("username", username).

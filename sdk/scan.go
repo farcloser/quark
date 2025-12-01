@@ -21,15 +21,15 @@ type ScanSeverity struct {
 //nolint:gochecknoglobals // ScanSeverity enum pattern requires global variables
 var (
 	// SeverityUnknown represents unknown severity.
-	SeverityUnknown = ScanSeverity{"UNKNOWN"}
+	SeverityUnknown = &ScanSeverity{"UNKNOWN"}
 	// SeverityLow represents low severity.
-	SeverityLow = ScanSeverity{"LOW"}
+	SeverityLow = &ScanSeverity{"LOW"}
 	// SeverityMedium represents medium severity.
-	SeverityMedium = ScanSeverity{"MEDIUM"}
+	SeverityMedium = &ScanSeverity{"MEDIUM"}
 	// SeverityHigh represents high severity.
-	SeverityHigh = ScanSeverity{"HIGH"}
+	SeverityHigh = &ScanSeverity{"HIGH"}
 	// SeverityCritical represents critical severity.
-	SeverityCritical = ScanSeverity{"CRITICAL"}
+	SeverityCritical = &ScanSeverity{"CRITICAL"}
 
 	// scanMutex serializes scan operations to avoid Trivy database lock contention.
 	scanMutex sync.Mutex
@@ -83,11 +83,11 @@ type ScanAction struct {
 //nolint:gochecknoglobals // ScanAction enum pattern requires global variables
 var (
 	// ActionError causes scan to fail (default).
-	ActionError = ScanAction{"error"}
+	ActionError = &ScanAction{"error"}
 	// ActionWarn logs vulnerabilities as warnings without failing.
-	ActionWarn = ScanAction{"warn"}
+	ActionWarn = &ScanAction{"warn"}
 	// ActionInfo logs vulnerabilities as info without failing.
-	ActionInfo = ScanAction{"info"}
+	ActionInfo = &ScanAction{"info"}
 )
 
 // String returns the string representation of the action.
@@ -134,11 +134,11 @@ type ScanFormat struct {
 //nolint:gochecknoglobals // ScanFormat enum pattern requires global variables
 var (
 	// FormatTable represents table output.
-	FormatTable = ScanFormat{"table"}
+	FormatTable = &ScanFormat{"table"}
 	// FormatJSON represents JSON output.
-	FormatJSON = ScanFormat{"json"}
+	FormatJSON = &ScanFormat{"json"}
 	// FormatSARIF represents SARIF output.
-	FormatSARIF = ScanFormat{"sarif"}
+	FormatSARIF = &ScanFormat{"sarif"}
 )
 
 // String returns the string representation of the format.
@@ -183,8 +183,8 @@ const (
 
 // ScanSeverityCheck represents a threshold check with an action.
 type ScanSeverityCheck struct {
-	Threshold ScanSeverity `json:"threshold,omitempty"`
-	Action    ScanAction   `json:"action,omitempty"`
+	Threshold *ScanSeverity `json:"threshold,omitempty"`
+	Action    *ScanAction   `json:"action,omitempty"`
 }
 
 // ScanArgs contains configuration options for creating a scan operation.
@@ -192,7 +192,7 @@ type ScanArgs struct {
 	Description    string              // Required - operation name
 	Source         *Image              // Required - image to scan
 	SeverityChecks []ScanSeverityCheck // Optional - severity checks (default: HIGH+CRITICAL error)
-	Format         ScanFormat          // Optional - output format (default: table)
+	Format         *ScanFormat         // Optional - output format (default: table)
 	Timeout        time.Duration       // Optional - operation timeout
 }
 
@@ -202,7 +202,7 @@ type scanOp struct {
 	image          *Image
 	registry       *Registry
 	severityChecks []ScanSeverityCheck
-	format         ScanFormat
+	format         *ScanFormat
 	timeout        time.Duration
 	log            zerolog.Logger
 }
@@ -282,8 +282,13 @@ func (s *scanOp) execute(ctx context.Context) error {
 
 	// Process severity checks sequentially (fail-fast on first Error)
 	for _, check := range s.severityChecks {
+		// Skip if threshold not specified
+		if check.Threshold == nil {
+			continue
+		}
+
 		// Get vulnerabilities at or above this threshold
-		matchingVulns := getVulnerabilitiesAtOrAbove(result, check.Threshold)
+		matchingVulns := getVulnerabilitiesAtOrAbove(result, *check.Threshold)
 
 		if len(matchingVulns) == 0 {
 			continue // No vulnerabilities at this threshold, skip
@@ -304,8 +309,13 @@ func (s *scanOp) execute(ctx context.Context) error {
 			return fmt.Errorf("failed to format output: %w", err)
 		}
 
-		// Handle according to action
-		switch check.Action {
+		// Handle according to action (default to error if not specified)
+		action := check.Action
+		if action == nil {
+			action = ActionError
+		}
+
+		switch action {
 		case ActionError:
 			s.log.Error().
 				Str("threshold", check.Threshold.String()).
