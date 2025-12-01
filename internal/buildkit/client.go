@@ -161,6 +161,22 @@ func (bkclient *Client) BuildMultiPlatform(
 	return tag, nil
 }
 
+// RegistryLogin logs into a Docker registry on the remote host.
+func (bkclient *Client) RegistryLogin(registry, username, password string) error {
+	cmd := fmt.Sprintf("echo '%s' | docker login -u '%s' --password-stdin '%s'", password, username, registry)
+
+	bkclient.log.Debug().Str("registry", registry).Msg("logging into registry")
+
+	_, stderr, err := bkclient.sshConn.Execute(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to login to registry %s: %w (stderr: %s)", registry, err, stderr)
+	}
+
+	bkclient.log.Info().Str("registry", registry).Msg("registry login successful")
+
+	return nil
+}
+
 // UploadContext uploads the build context to the remote host.
 func (bkclient *Client) UploadContext(ctx context.Context, localPath, remotePath string) error {
 	bkclient.log.Debug().

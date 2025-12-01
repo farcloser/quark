@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"github.com/rs/zerolog/log"
 
@@ -18,16 +19,15 @@ func main() {
 
 	// Note: This example requires:
 	// 1. A local Dockerfile at ./Dockerfile
-	// 2. Registry credentials configured
+	// 2. Registry credentials configured via environment variables
 	// 3. Docker buildx configured for multi-platform builds
 	//
 	// Configure registry for pushing built images
-	// Replace with your actual registry credentials
-	// plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
-	//     Domain:   "ghcr.io",
-	//     Username: username,
-	//     Token:    password,
-	// }))
+	plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
+		Domain:   "ghcr.io",
+		Username: os.Getenv("GHCR_USERNAME"),
+		Token:    os.Getenv("GHCR_TOKEN"),
+	}))
 
 	// Define local buildkit nodes for multi-platform builds
 	amd64Builder, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{

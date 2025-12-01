@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/farcloser/quark/dag"
+	"github.com/farcloser/quark/internal/reference"
 	"github.com/farcloser/quark/internal/registry"
 	"github.com/farcloser/quark/ssh"
 )
@@ -298,14 +299,23 @@ func (plan *Plan) Build(args *BuildArgs) (*Handle, error) {
 		dockerfile = "Dockerfile"
 	}
 
+	// Parse tag to extract registry domain for authentication
+	var destRegistry *Registry
+
+	tagRef, err := reference.Parse(args.Tag)
+	if err == nil && tagRef.Domain != "" {
+		destRegistry = plan.getRegistry(tagRef.Domain)
+	}
+
 	buildOp := &build{
-		opName:     args.Name,
-		context:    args.Context,
-		dockerfile: dockerfile,
-		nodes:      args.Nodes,
-		tag:        args.Tag,
-		timeout:    args.Timeout,
-		log:        plan.log.With().Str("build", args.Name).Logger(),
+		opName:       args.Name,
+		context:      args.Context,
+		dockerfile:   dockerfile,
+		nodes:        args.Nodes,
+		tag:          args.Tag,
+		timeout:      args.Timeout,
+		destRegistry: destRegistry,
+		log:          plan.log.With().Str("build", args.Name).Logger(),
 	}
 
 	wrapper := &operationWrapper{op: buildOp}

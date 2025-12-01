@@ -24,13 +24,14 @@ type BuildArgs struct {
 
 // build represents a container image build operation.
 type build struct {
-	opName     string
-	context    string
-	dockerfile string
-	nodes      []*BuildNode
-	tag        string
-	timeout    time.Duration
-	log        zerolog.Logger
+	opName       string
+	context      string
+	dockerfile   string
+	nodes        []*BuildNode
+	tag          string
+	timeout      time.Duration
+	destRegistry *Registry // Registry credentials for pushing
+	log          zerolog.Logger
 
 	// sshPool is set by executor before execution
 	sshPool *ssh.Pool
@@ -70,6 +71,17 @@ func (b *build) execute(ctx context.Context) error {
 
 	// Create buildkit client
 	bkClient := buildkit.NewClient(sshClient, b.log)
+
+	// Login to destination registry if credentials are available
+	if b.destRegistry != nil && b.destRegistry.username != "" {
+		if err := bkClient.RegistryLogin(
+			b.destRegistry.domain,
+			b.destRegistry.username,
+			b.destRegistry.token,
+		); err != nil {
+			return fmt.Errorf("failed to login to registry: %w", err)
+		}
+	}
 
 	// Create unique remote directory for build context
 	remotePathRaw, _, err := sshClient.Execute("mktemp -d -t quark-build-XXXXXX")
