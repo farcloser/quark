@@ -16,6 +16,7 @@ const nodeSelectInterval = 1 * time.Second
 
 type buildAction struct {
 	resource.BaseResource[buildAction]
+
 	log     *slog.Logger
 	builder *Builder
 	image   *Image

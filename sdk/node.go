@@ -18,6 +18,7 @@ const (
 // Node represents a remote SSH-accessible node.
 type Node struct {
 	resource.BaseResource[Node]
+
 	opts NodeOpts
 	log  *slog.Logger
 	conn ssh.Connection

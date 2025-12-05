@@ -18,6 +18,7 @@ const (
 // Registry represents a container registry with credentials.
 type Registry struct {
 	resource.BaseResource[Registry]
+
 	opts RegistryOpts
 }
 
@@ -60,15 +61,6 @@ func (reg *Registry) Execute(ctx context.Context) error {
 	return nil
 }
 
-// credentials returns the registry credentials as a shared.RegistryCredentials.
-func (reg *Registry) credentials() *shared.RegistryCredentials {
-	return &shared.RegistryCredentials{
-		Domain:   reg.opts.Domain,
-		Username: reg.opts.Username,
-		Token:    reg.opts.Token,
-	}
-}
-
 // NewImage creates a new Image resource associated with this registry.
 // The image automatically depends on the registry for authentication.
 func (reg *Registry) NewImage(opts ImageOpts) *Image {
@@ -93,4 +85,13 @@ func (reg *Registry) NewImage(opts ImageOpts) *Image {
 	img.DependsOn(reg)
 
 	return img
+}
+
+// credentials returns the registry credentials as a shared.RegistryCredentials.
+func (reg *Registry) credentials() *shared.RegistryCredentials {
+	return &shared.RegistryCredentials{
+		Domain:   reg.opts.Domain,
+		Username: reg.opts.Username,
+		Token:    reg.opts.Token,
+	}
 }

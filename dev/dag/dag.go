@@ -83,6 +83,7 @@ func NewGraph[T Executable]() *Graph[T] {
 func (g *Graph[T]) Add(node *Node[T]) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
 	g.nodes[node.id] = node
 }
 
@@ -90,6 +91,7 @@ func (g *Graph[T]) Add(node *Node[T]) {
 func (g *Graph[T]) Get(id string) (*Node[T], bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+
 	node, ok := g.nodes[id]
 
 	return node, ok
@@ -251,6 +253,7 @@ func (g *Graph[T]) Execute(ctx context.Context) error {
 				currentNode.err = err
 				currentNode.executed = true
 				currentNode.mu.Unlock()
+
 				errCh <- fmt.Errorf("%s: %w", currentNode.exec.Name(), err)
 
 				cancel() // Cancel other goroutines

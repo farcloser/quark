@@ -25,8 +25,8 @@ func TestChecker_CheckVersion_RequiresTag(t *testing.T) {
 
 	client := registry.NewClient(nil, discardLogger())
 	checker := version.NewChecker(client, discardLogger())
-	info, err := checker.CheckVersion(t.Context(), *digestRef)
 
+	info, err := checker.CheckVersion(t.Context(), *digestRef)
 	if err == nil {
 		t.Fatal("CheckVersion() error = nil, want error for digest-only reference")
 	}

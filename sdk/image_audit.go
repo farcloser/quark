@@ -18,6 +18,7 @@ const (
 
 type auditAction struct {
 	resource.BaseResource[auditAction]
+
 	log    *slog.Logger
 	opts   *audit.Options
 	image  *Image
@@ -88,7 +89,7 @@ func (aa *auditAction) Execute(ctx context.Context) error {
 
 		levelsStr := levelsToString(check.Levels)
 
-		switch action {
+		switch action { //revive:disable-line:enforce-switch-style
 		case audit.ActionError:
 			aa.log.Error(msgIssuesFound,
 				slog.String("levels", levelsStr),
@@ -126,6 +127,34 @@ func (aa *auditAction) Execute(ctx context.Context) error {
 	return nil
 }
 
+// levelsToString converts a slice of levels to a comma-separated string.
+func levelsToString(levels []*audit.Severity) string {
+	strs := make([]string, len(levels))
+	for i, lvl := range levels {
+		strs[i] = lvl.String()
+	}
+
+	return strings.Join(strs, ",")
+}
+
+// FormatOutput formats audit results for display.
+func (*auditAction) FormatOutput(result *dockle.ScanResult, format *audit.Format) (string, error) {
+	switch format {
+	case audit.FormatTable:
+		return formatAuditTable(result), nil
+	case audit.FormatJSON:
+		bytes, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return "", err
+		}
+
+		return string(bytes), nil
+	default:
+		// case audit.FormatSARIF:
+		panic("not implemented")
+	}
+}
+
 // getDetailsByLevels returns details matching any of the specified levels,
 // excluding any check codes in the ignore list.
 func (*auditAction) getDetailsByLevels(
@@ -159,34 +188,6 @@ func (*auditAction) getDetailsByLevels(
 	}
 
 	return matching
-}
-
-// levelsToString converts a slice of levels to a comma-separated string.
-func levelsToString(levels []*audit.Severity) string {
-	strs := make([]string, len(levels))
-	for i, lvl := range levels {
-		strs[i] = lvl.String()
-	}
-
-	return strings.Join(strs, ",")
-}
-
-// FormatOutput formats audit results for display.
-func (*auditAction) FormatOutput(result *dockle.ScanResult, format *audit.Format) (string, error) {
-	switch format {
-	case audit.FormatTable:
-		return formatAuditTable(result), nil
-	case audit.FormatJSON:
-		bytes, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return "", err
-		}
-
-		return string(bytes), nil
-	default:
-		// case audit.FormatSARIF:
-		panic("not implemented")
-	}
 }
 
 func formatAuditTable(result *dockle.ScanResult) string {

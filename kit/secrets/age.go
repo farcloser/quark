@@ -236,6 +236,7 @@ func (*AgeBackend) extractFields(data any, fields []string) (map[string]string, 
 
 		// Convert value to string
 		var strValue string
+
 		switch typedValue := value.(type) {
 		case string:
 			strValue = typedValue

@@ -48,11 +48,13 @@ func (p *Pool) GetClientWithKey(endpoint, fingerprint, keyContent string) (Conne
 
 	// Check if client already exists
 	p.mu.RLock()
+
 	if client, exists := p.clients[key]; exists {
 		p.mu.RUnlock()
 
 		return client, nil
 	}
+
 	p.mu.RUnlock()
 
 	// Create new client

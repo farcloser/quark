@@ -18,6 +18,7 @@ const (
 
 type buildLintAction struct {
 	resource.BaseResource[buildLintAction]
+
 	log     *slog.Logger
 	builder *Builder
 	opts    *lint.Options
@@ -75,7 +76,7 @@ func (la *buildLintAction) Execute(ctx context.Context) error {
 
 		severitiesStr := lintSeveritiesToString(check.Severities)
 
-		switch action {
+		switch action { //revive:disable-line:enforce-switch-style
 		case lint.ActionError:
 			la.log.Error(msgLintIssuesFound,
 				slog.String("severities", severitiesStr),
@@ -113,6 +114,34 @@ func (la *buildLintAction) Execute(ctx context.Context) error {
 	return nil
 }
 
+// lintSeveritiesToString converts a slice of severities to a comma-separated string.
+func lintSeveritiesToString(severities []*lint.Severity) string {
+	strs := make([]string, len(severities))
+	for i, sev := range severities {
+		strs[i] = sev.String()
+	}
+
+	return strings.Join(strs, ",")
+}
+
+// FormatOutput formats lint results for display.
+func (*buildLintAction) FormatOutput(violations []godolint.Violation, format *lint.Format) (string, error) {
+	switch format {
+	case lint.FormatTable:
+		return formatLintTable(violations), nil
+	case lint.FormatJSON:
+		bytes, err := json.MarshalIndent(violations, "", "  ")
+		if err != nil {
+			return "", err
+		}
+
+		return string(bytes), nil
+	default:
+		// case lint.FormatSARIF:
+		panic("not implemented")
+	}
+}
+
 // getViolationsBySeverities returns violations matching any of the specified severities.
 func (*buildLintAction) getViolationsBySeverities(
 	result *godolint.Result,
@@ -145,34 +174,6 @@ func (*buildLintAction) getViolationsBySeverities(
 	}
 
 	return matching
-}
-
-// lintSeveritiesToString converts a slice of severities to a comma-separated string.
-func lintSeveritiesToString(severities []*lint.Severity) string {
-	strs := make([]string, len(severities))
-	for i, sev := range severities {
-		strs[i] = sev.String()
-	}
-
-	return strings.Join(strs, ",")
-}
-
-// FormatOutput formats lint results for display.
-func (*buildLintAction) FormatOutput(violations []godolint.Violation, format *lint.Format) (string, error) {
-	switch format {
-	case lint.FormatTable:
-		return formatLintTable(violations), nil
-	case lint.FormatJSON:
-		bytes, err := json.MarshalIndent(violations, "", "  ")
-		if err != nil {
-			return "", err
-		}
-
-		return string(bytes), nil
-	default:
-		// case lint.FormatSARIF:
-		panic("not implemented")
-	}
 }
 
 func formatLintTable(violations []godolint.Violation) string {

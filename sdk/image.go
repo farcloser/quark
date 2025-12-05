@@ -20,6 +20,7 @@ import (
 // Image represents a container image reference.
 type Image struct {
 	resource.BaseResource[Image]
+
 	opts     ImageOpts
 	ref      *reference.ImageReference
 	log      *slog.Logger
@@ -89,20 +90,6 @@ func (img *Image) Name() string {
 // Must be called after plan execution.
 func (img *Image) Version() string {
 	return img.ref.Tag
-}
-
-// clone creates a copy of the image with a fresh BaseResource.
-// Used by action methods to return a new image representing post-action state.
-func (img *Image) clone() *Image {
-	result := &Image{
-		opts:     img.opts,
-		ref:      img.ref,
-		log:      img.log,
-		registry: img.registry,
-	}
-	result.BaseResource = resource.NewBaseResource(result, img.ResourceName())
-
-	return result
 }
 
 // Scan schedules a vulnerability scan on the image.
@@ -220,6 +207,20 @@ func (img *Image) Update(uo *update.Options) *Image {
 
 	result := img.clone()
 	result.DependsOn(action)
+
+	return result
+}
+
+// clone creates a copy of the image with a fresh BaseResource.
+// Used by action methods to return a new image representing post-action state.
+func (img *Image) clone() *Image {
+	result := &Image{
+		opts:     img.opts,
+		ref:      img.ref,
+		log:      img.log,
+		registry: img.registry,
+	}
+	result.BaseResource = resource.NewBaseResource(result, img.ResourceName())
 
 	return result
 }

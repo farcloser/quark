@@ -19,6 +19,7 @@ const (
 
 type scanAction struct {
 	resource.BaseResource[scanAction]
+
 	log    *slog.Logger
 	opts   *scan.Options
 	image  *Image
@@ -93,7 +94,7 @@ func (sa *scanAction) Execute(ctx context.Context) error {
 
 		severitiesStr := severitiesToString(check.Severities)
 
-		switch action {
+		switch action { //revive:disable-line:enforce-switch-style
 		case scan.ActionError:
 			sa.log.Error(msgVulnerabilitiesFound,
 				slog.String("severities", severitiesStr),
@@ -128,6 +129,34 @@ func (sa *scanAction) Execute(ctx context.Context) error {
 	sa.result = result
 
 	return nil
+}
+
+// severitiesToString converts a slice of severities to a comma-separated string.
+func severitiesToString(severities []*scan.Severity) string {
+	strs := make([]string, len(severities))
+	for i, sev := range severities {
+		strs[i] = sev.String()
+	}
+
+	return strings.Join(strs, ",")
+}
+
+// FormatOutput formats scan results for display.
+func (*scanAction) FormatOutput(result []*trivy.Result, format *scan.Format) (string, error) {
+	switch format {
+	case scan.FormatTable:
+		return formatScanTable(result), nil
+	case scan.FormatJSON:
+		bytes, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return "", err
+		}
+
+		return string(bytes), nil
+	default:
+		// case scan.FormatSARIF:
+		panic("not implemented")
+	}
 }
 
 // getVulnerabilitiesBySeverities returns vulnerabilities matching any of the specified severities,
@@ -165,34 +194,6 @@ func (*scanAction) getVulnerabilitiesBySeverities(
 	}
 
 	return matching
-}
-
-// severitiesToString converts a slice of severities to a comma-separated string.
-func severitiesToString(severities []*scan.Severity) string {
-	strs := make([]string, len(severities))
-	for i, sev := range severities {
-		strs[i] = sev.String()
-	}
-
-	return strings.Join(strs, ",")
-}
-
-// FormatOutput formats scan results for display.
-func (*scanAction) FormatOutput(result []*trivy.Result, format *scan.Format) (string, error) {
-	switch format {
-	case scan.FormatTable:
-		return formatScanTable(result), nil
-	case scan.FormatJSON:
-		bytes, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return "", err
-		}
-
-		return string(bytes), nil
-	default:
-		// case scan.FormatSARIF:
-		panic("not implemented")
-	}
 }
 
 func formatScanTable(result []*trivy.Result) string {

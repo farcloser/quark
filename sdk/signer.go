@@ -7,6 +7,7 @@ import (
 // Signer represents a signing configuration.
 type Signer struct {
 	resource.BaseResource[Signer]
+
 	opts SignerOpts
 }
 

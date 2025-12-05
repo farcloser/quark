@@ -11,6 +11,7 @@ import (
 // Builder represents a build configuration.
 type Builder struct {
 	resource.BaseResource[Builder]
+
 	opts BuildOpts
 }
 

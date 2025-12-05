@@ -13,6 +13,7 @@ import (
 
 type signAction struct {
 	resource.BaseResource[signAction]
+
 	log    *slog.Logger
 	opts   *sign.Options
 	image  *Image

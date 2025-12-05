@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -259,13 +260,68 @@ func (client *Client) SyncMultiPlatform(
 
 // containsString checks if a string slice contains a specific string.
 func containsString(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
+	return slices.Contains(slice, s)
+}
+
+// GetDigest returns the digest for an image reference.
+func (client *Client) GetDigest(ctx context.Context, imageRef reference.ImageReference) (string, error) {
+	desc, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
 
-	return false
+	return desc.Digest.String(), nil
+}
+
+// CheckExists checks if an image exists in the registry.
+// Returns (false, nil) only for 404/not found errors.
+// Returns (false, err) for all other errors (network, auth, etc.).
+func (client *Client) CheckExists(ctx context.Context, imageRef reference.ImageReference) (bool, error) {
+	_, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
+	if err != nil {
+		// Check if this is a 404/not found error
+		var transportErr *transport.Error
+		if errors.As(err, &transportErr) && transportErr.StatusCode == http.StatusNotFound {
+			// Image doesn't exist - this is expected
+			return false, nil
+		}
+		// Other errors (network, auth, etc.) should be returned
+		return false, fmt.Errorf("%w: %w", ErrCheckImageExistence, err)
+	}
+
+	return true, nil
+}
+
+// GetImageHandle fetches a v1.Image for the given reference.
+// This is needed for creating manifest lists.
+func (client *Client) GetImageHandle(ctx context.Context, imageRef reference.ImageReference) (v1.Image, error) {
+	img, err := remote.Image(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrGetImage, err)
+	}
+
+	return img, nil
+}
+
+// WriteImage pushes an image to the registry at the given reference.
+func (client *Client) WriteImage(ctx context.Context, imageRef reference.ImageReference, img v1.Image) error {
+	if err := remote.Write(toGCRRef(imageRef), img, client.remoteOptionsWithContext(ctx)...); err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteImage, err)
+	}
+
+	return nil
+}
+
+// ListTags returns all tags for an image reference's repository.
+func (client *Client) ListTags(ctx context.Context, imageRef reference.ImageReference) ([]string, error) {
+	repo := toGCRRef(imageRef).Context()
+
+	tags, err := remote.List(repo, client.remoteOptionsWithContext(ctx)...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrListTags, err)
+	}
+
+	return tags, nil
 }
 
 // fetchPlatformImage fetches a specific platform image by digest from source.
@@ -292,16 +348,6 @@ func (client *Client) fetchPlatformImage(
 	}
 
 	return img, nil
-}
-
-// GetDigest returns the digest for an image reference.
-func (client *Client) GetDigest(ctx context.Context, imageRef reference.ImageReference) (string, error) {
-	desc, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrGetImage, err)
-	}
-
-	return desc.Digest.String(), nil
 }
 
 // pushManifestList creates and pushes a manifest list from platform-specific images.
@@ -379,57 +425,6 @@ func (client *Client) pushManifestList(
 	)
 
 	return digest.String(), nil
-}
-
-// CheckExists checks if an image exists in the registry.
-// Returns (false, nil) only for 404/not found errors.
-// Returns (false, err) for all other errors (network, auth, etc.).
-func (client *Client) CheckExists(ctx context.Context, imageRef reference.ImageReference) (bool, error) {
-	_, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
-	if err != nil {
-		// Check if this is a 404/not found error
-		var transportErr *transport.Error
-		if errors.As(err, &transportErr) && transportErr.StatusCode == http.StatusNotFound {
-			// Image doesn't exist - this is expected
-			return false, nil
-		}
-		// Other errors (network, auth, etc.) should be returned
-		return false, fmt.Errorf("%w: %w", ErrCheckImageExistence, err)
-	}
-
-	return true, nil
-}
-
-// GetImageHandle fetches a v1.Image for the given reference.
-// This is needed for creating manifest lists.
-func (client *Client) GetImageHandle(ctx context.Context, imageRef reference.ImageReference) (v1.Image, error) {
-	img, err := remote.Image(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrGetImage, err)
-	}
-
-	return img, nil
-}
-
-// WriteImage pushes an image to the registry at the given reference.
-func (client *Client) WriteImage(ctx context.Context, imageRef reference.ImageReference, img v1.Image) error {
-	if err := remote.Write(toGCRRef(imageRef), img, client.remoteOptionsWithContext(ctx)...); err != nil {
-		return fmt.Errorf("%w: %w", ErrWriteImage, err)
-	}
-
-	return nil
-}
-
-// ListTags returns all tags for an image reference's repository.
-func (client *Client) ListTags(ctx context.Context, imageRef reference.ImageReference) ([]string, error) {
-	repo := toGCRRef(imageRef).Context()
-
-	tags, err := remote.List(repo, client.remoteOptionsWithContext(ctx)...)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListTags, err)
-	}
-
-	return tags, nil
 }
 
 // toGCRRef converts an ImageReference to a go-containerregistry Reference.

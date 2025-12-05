@@ -13,6 +13,7 @@ import (
 
 type updateAction struct {
 	resource.BaseResource[updateAction]
+
 	log   *slog.Logger
 	opts  *update.Options
 	image *Image

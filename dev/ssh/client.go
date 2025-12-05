@@ -66,6 +66,210 @@ func newClient(endpoint, fingerprint, keyContent string) *client {
 	}
 }
 
+// Execute runs a command on the remote host and returns stdout, stderr, and error.
+func (c *client) Execute(command string) (stdout, stderr string, err error) {
+	if c.sshClient == nil {
+		return "", "", ErrNotConnected
+	}
+
+	// Create a new session for this command
+	session, err := c.sshClient.NewSession()
+	if err != nil {
+		return "", "", wrapOpenChannelError(err)
+	}
+
+	defer func() { _ = session.Close() }()
+
+	// Capture stdout and stderr
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("%w: %w", ErrGetPipe, err)
+	}
+
+	stderrPipe, err := session.StderrPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("%w: %w", ErrGetPipe, err)
+	}
+
+	// Prepend /usr/local/bin to PATH to include common binary locations
+	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
+	command = pathPrepend + command
+
+	// Start command
+	if err := session.Start(command); err != nil {
+		return "", "", fmt.Errorf("%w: %w", ErrStartCommand, err)
+	}
+
+	// Read output
+	stdoutBytes, _ := io.ReadAll(stdoutPipe)
+	stderrBytes, _ := io.ReadAll(stderrPipe)
+
+	// Wait for command to complete
+	if err := session.Wait(); err != nil {
+		return string(stdoutBytes), string(stderrBytes), fmt.Errorf("%w: %w", ErrCommandFailed, err)
+	}
+
+	return string(stdoutBytes), string(stderrBytes), nil
+}
+
+// ExecuteStreaming runs a command on the remote host and streams stdout/stderr to the provided writers.
+func (c *client) ExecuteStreaming(command string, stdout, stderr io.Writer) error {
+	if c.sshClient == nil {
+		return ErrNotConnected
+	}
+
+	// Create a new session for this command
+	session, err := c.sshClient.NewSession()
+	if err != nil {
+		return wrapOpenChannelError(err)
+	}
+
+	defer func() { _ = session.Close() }()
+
+	// Set output writers
+	session.Stdout = stdout
+	session.Stderr = stderr
+
+	// Prepend /usr/local/bin to PATH to include common binary locations
+	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
+	command = pathPrepend + command
+
+	// Run command (blocks until completion)
+	if err := session.Run(command); err != nil {
+		return fmt.Errorf("%w: %w", ErrCommandFailed, err)
+	}
+
+	return nil
+}
+
+// ExecuteWithStdin executes a command with data piped to stdin.
+// The data is sent directly through the SSH channel and never touches the filesystem.
+// This is useful for writing to FIFOs or other scenarios where data must not be written to disk.
+func (c *client) ExecuteWithStdin(command string, stdin []byte) error {
+	if c.sshClient == nil {
+		return ErrNotConnected
+	}
+
+	// Create a new session for this command
+	session, err := c.sshClient.NewSession()
+	if err != nil {
+		return wrapOpenChannelError(err)
+	}
+
+	defer func() { _ = session.Close() }()
+
+	// Get stdin pipe
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrGetPipe, err)
+	}
+
+	// Prepend /usr/local/bin to PATH to include common binary locations
+	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
+	command = pathPrepend + command
+
+	// Start command
+	if err := session.Start(command); err != nil {
+		return fmt.Errorf("%w: %w", ErrStartCommand, err)
+	}
+
+	// Write data to stdin
+	if _, err := stdinPipe.Write(stdin); err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteStdin, err)
+	}
+
+	// Close stdin to signal EOF
+	if err := stdinPipe.Close(); err != nil {
+		return fmt.Errorf("%w: %w", ErrCloseStdin, err)
+	}
+
+	// Wait for command to complete
+	if err := session.Wait(); err != nil {
+		return fmt.Errorf("%w: %w", ErrCommandFailed, err)
+	}
+
+	return nil
+}
+
+// String returns a string representation of the client.
+func (c *client) String() string {
+	if c.hostname != "" {
+		return fmt.Sprintf("%s@%s:%d", c.user, c.hostname, c.port)
+	}
+
+	return c.endpoint
+}
+
+// UploadFile uploads a local file to the remote host using SFTP protocol.
+func (c *client) UploadFile(localPath, remotePath string) error {
+	remoteFile, err := c.getRemoteFile(remotePath)
+	if err != nil {
+		return err
+	}
+
+	// Read local file
+	//nolint:gosec // Path is from user config, not user input
+	localFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrOpenLocalFile, err)
+	}
+
+	defer func() { _ = localFile.Close() }()
+
+	// Copy content from local to remote
+	if _, err := io.Copy(remoteFile, localFile); err != nil {
+		_ = remoteFile.Close()
+
+		return fmt.Errorf("%w: %w", ErrWriteFile, err)
+	}
+
+	// Close remote file
+	if err := remoteFile.Close(); err != nil {
+		return fmt.Errorf("%w: %w", ErrCloseFile, err)
+	}
+
+	return nil
+}
+
+// UploadData uploads raw data as a file to the remote host.
+// Data is uploaded directly without creating a local temporary file.
+// Permissions are set to 0600 immediately after file creation to minimize the race window.
+func (c *client) UploadData(data []byte, remotePath string) error {
+	remoteFile, err := c.getRemoteFile(remotePath)
+	if err != nil {
+		return err
+	}
+
+	// Write data (file now has 0600 permissions)
+	if _, err := remoteFile.Write(data); err != nil {
+		_ = remoteFile.Close()
+
+		return fmt.Errorf("%w: %w", ErrWriteFile, err)
+	}
+
+	// Close remote file
+	if err := remoteFile.Close(); err != nil {
+		return fmt.Errorf("%w: %w", ErrCloseFile, err)
+	}
+
+	return nil
+}
+
+// DialUnix opens a connection to a remote Unix socket through the SSH tunnel.
+// This allows local processes to communicate with remote Unix sockets (e.g., Docker daemon).
+func (c *client) DialUnix(remotePath string) (net.Conn, error) {
+	if c.sshClient == nil {
+		return nil, ErrNotConnected
+	}
+
+	conn, err := c.sshClient.Dial("unix", remotePath)
+	if err != nil {
+		return nil, fmt.Errorf("%w %s: %w", ErrDialUnixSocket, remotePath, err) //revive:disable-line:add-constant
+	}
+
+	return conn, nil
+}
+
 // connect establishes an SSH connection to the remote host using SSH key or agent.
 // Connection parameters are resolved from ~/.ssh/config based on the endpoint.
 func (c *client) connect() error {
@@ -333,131 +537,6 @@ func (c *client) close() error {
 	return nil
 }
 
-// Execute runs a command on the remote host and returns stdout, stderr, and error.
-func (c *client) Execute(command string) (stdout, stderr string, err error) {
-	if c.sshClient == nil {
-		return "", "", ErrNotConnected
-	}
-
-	// Create a new session for this command
-	session, err := c.sshClient.NewSession()
-	if err != nil {
-		return "", "", wrapOpenChannelError(err)
-	}
-
-	defer func() { _ = session.Close() }()
-
-	// Capture stdout and stderr
-	stdoutPipe, err := session.StdoutPipe()
-	if err != nil {
-		return "", "", fmt.Errorf("%w: %w", ErrGetPipe, err)
-	}
-
-	stderrPipe, err := session.StderrPipe()
-	if err != nil {
-		return "", "", fmt.Errorf("%w: %w", ErrGetPipe, err)
-	}
-
-	// Prepend /usr/local/bin to PATH to include common binary locations
-	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
-	command = pathPrepend + command
-
-	// Start command
-	if err := session.Start(command); err != nil {
-		return "", "", fmt.Errorf("%w: %w", ErrStartCommand, err)
-	}
-
-	// Read output
-	stdoutBytes, _ := io.ReadAll(stdoutPipe)
-	stderrBytes, _ := io.ReadAll(stderrPipe)
-
-	// Wait for command to complete
-	if err := session.Wait(); err != nil {
-		return string(stdoutBytes), string(stderrBytes), fmt.Errorf("%w: %w", ErrCommandFailed, err)
-	}
-
-	return string(stdoutBytes), string(stderrBytes), nil
-}
-
-// ExecuteStreaming runs a command on the remote host and streams stdout/stderr to the provided writers.
-func (c *client) ExecuteStreaming(command string, stdout, stderr io.Writer) error {
-	if c.sshClient == nil {
-		return ErrNotConnected
-	}
-
-	// Create a new session for this command
-	session, err := c.sshClient.NewSession()
-	if err != nil {
-		return wrapOpenChannelError(err)
-	}
-
-	defer func() { _ = session.Close() }()
-
-	// Set output writers
-	session.Stdout = stdout
-	session.Stderr = stderr
-
-	// Prepend /usr/local/bin to PATH to include common binary locations
-	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
-	command = pathPrepend + command
-
-	// Run command (blocks until completion)
-	if err := session.Run(command); err != nil {
-		return fmt.Errorf("%w: %w", ErrCommandFailed, err)
-	}
-
-	return nil
-}
-
-// ExecuteWithStdin executes a command with data piped to stdin.
-// The data is sent directly through the SSH channel and never touches the filesystem.
-// This is useful for writing to FIFOs or other scenarios where data must not be written to disk.
-func (c *client) ExecuteWithStdin(command string, stdin []byte) error {
-	if c.sshClient == nil {
-		return ErrNotConnected
-	}
-
-	// Create a new session for this command
-	session, err := c.sshClient.NewSession()
-	if err != nil {
-		return wrapOpenChannelError(err)
-	}
-
-	defer func() { _ = session.Close() }()
-
-	// Get stdin pipe
-	stdinPipe, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrGetPipe, err)
-	}
-
-	// Prepend /usr/local/bin to PATH to include common binary locations
-	// SSH non-interactive sessions have minimal PATH (/usr/bin:/bin)
-	command = pathPrepend + command
-
-	// Start command
-	if err := session.Start(command); err != nil {
-		return fmt.Errorf("%w: %w", ErrStartCommand, err)
-	}
-
-	// Write data to stdin
-	if _, err := stdinPipe.Write(stdin); err != nil {
-		return fmt.Errorf("%w: %w", ErrWriteStdin, err)
-	}
-
-	// Close stdin to signal EOF
-	if err := stdinPipe.Close(); err != nil {
-		return fmt.Errorf("%w: %w", ErrCloseStdin, err)
-	}
-
-	// Wait for command to complete
-	if err := session.Wait(); err != nil {
-		return fmt.Errorf("%w: %w", ErrCommandFailed, err)
-	}
-
-	return nil
-}
-
 // getAuthMethod returns an SSH auth method, preferring SSH key over agent.
 // If SSH key content is provided, it will be parsed and used for authentication.
 // Otherwise, falls back to SSH agent authentication.
@@ -645,15 +724,6 @@ func (c *client) knownHostsCallback() (ssh.HostKeyCallback, error) {
 	}, nil
 }
 
-// String returns a string representation of the client.
-func (c *client) String() string {
-	if c.hostname != "" {
-		return fmt.Sprintf("%s@%s:%d", c.user, c.hostname, c.port)
-	}
-
-	return c.endpoint
-}
-
 func (c *client) getRemoteFile(remotePath string) (*sftp.File, error) {
 	if c.sshClient == nil {
 		return nil, ErrNotConnected
@@ -675,74 +745,4 @@ func (c *client) getRemoteFile(remotePath string) (*sftp.File, error) {
 	}
 
 	return remoteFile, nil
-}
-
-// UploadFile uploads a local file to the remote host using SFTP protocol.
-func (c *client) UploadFile(localPath, remotePath string) error {
-	remoteFile, err := c.getRemoteFile(remotePath)
-	if err != nil {
-		return err
-	}
-
-	// Read local file
-	//nolint:gosec // Path is from user config, not user input
-	localFile, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrOpenLocalFile, err)
-	}
-
-	defer func() { _ = localFile.Close() }()
-
-	// Copy content from local to remote
-	if _, err := io.Copy(remoteFile, localFile); err != nil {
-		_ = remoteFile.Close()
-
-		return fmt.Errorf("%w: %w", ErrWriteFile, err)
-	}
-
-	// Close remote file
-	if err := remoteFile.Close(); err != nil {
-		return fmt.Errorf("%w: %w", ErrCloseFile, err)
-	}
-
-	return nil
-}
-
-// UploadData uploads raw data as a file to the remote host.
-// Data is uploaded directly without creating a local temporary file.
-// Permissions are set to 0600 immediately after file creation to minimize the race window.
-func (c *client) UploadData(data []byte, remotePath string) error {
-	remoteFile, err := c.getRemoteFile(remotePath)
-	if err != nil {
-		return err
-	}
-
-	// Write data (file now has 0600 permissions)
-	if _, err := remoteFile.Write(data); err != nil {
-		_ = remoteFile.Close()
-
-		return fmt.Errorf("%w: %w", ErrWriteFile, err)
-	}
-
-	// Close remote file
-	if err := remoteFile.Close(); err != nil {
-		return fmt.Errorf("%w: %w", ErrCloseFile, err)
-	}
-
-	return nil
-}
-
-// DialUnix opens a connection to a remote Unix socket through the SSH tunnel.
-// This allows local processes to communicate with remote Unix sockets (e.g., Docker daemon).
-func (c *client) DialUnix(remotePath string) (net.Conn, error) {
-	if c.sshClient == nil {
-		return nil, ErrNotConnected
-	}
-
-	conn, err := c.sshClient.Dial("unix", remotePath)
-	if err != nil {
-		return nil, fmt.Errorf("%w %s: %w", ErrDialUnixSocket, remotePath, err) //revive:disable-line:add-constant
-	}
-
-	return conn, nil
 }

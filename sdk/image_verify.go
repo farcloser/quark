@@ -15,6 +15,7 @@ import (
 
 type verifyAction struct {
 	resource.BaseResource[verifyAction]
+
 	log    *slog.Logger
 	opts   *verify.Options
 	image  *Image

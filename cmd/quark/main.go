@@ -75,7 +75,7 @@ func main() {
 	}
 }
 
-func executeCommand(_ context.Context, cmd *cli.Command) error {
+func executeCommand(ctx context.Context, cmd *cli.Command) error {
 	planPath := cmd.String("plan")
 	dryRun := cmd.Bool("dry-run")
 
@@ -108,7 +108,7 @@ func executeCommand(_ context.Context, cmd *cli.Command) error {
 	}
 
 	// #nosec G204 -- args constructed from validated plan path, executing go run is intentional
-	execCmd := exec.Command("go", args...)
+	execCmd := exec.CommandContext(ctx, "go", args...)
 	execCmd.Stdout = os.Stdout
 	execCmd.Stderr = os.Stderr
 	execCmd.Env = os.Environ()

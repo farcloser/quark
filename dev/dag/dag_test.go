@@ -220,7 +220,6 @@ func TestGraph_Execute_Error(t *testing.T) {
 	g.Add(node3)
 
 	err := g.Execute(t.Context())
-
 	if err == nil {
 		t.Error("Execute() should have returned error")
 	}
@@ -277,7 +276,6 @@ func TestGraph_Execute_ContextCancellation(t *testing.T) {
 	defer cancel()
 
 	err := g.Execute(ctx)
-
 	if err == nil {
 		t.Error("Execute() should have returned error on context cancellation")
 	}

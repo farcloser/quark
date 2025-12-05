@@ -65,10 +65,17 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 
 	// Start Debian container with SSH server
 	// Using debian image, install openssh-server and sudo, inject public key
-	startCmd := exec.Command("docker", "run", "-d", "--rm", //nolint:gosec // Test container with test-generated key
-		"--name", containerName,
+	startCmd := exec.CommandContext(
+		t.Context(),
+		"docker",
+		"run",
+		"-d",
+		"--rm", //nolint:gosec // Test container with test-generated key
+		"--name",
+		containerName,
 		"debian:bookworm-slim",
-		"sh", "-c",
+		"sh",
+		"-c",
 		"apt-get update -qq && "+
 			"apt-get install -y -qq openssh-server sudo && "+
 			"mkdir -p /run/sshd /root/.ssh && "+
@@ -85,12 +92,17 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 
 	// Setup cleanup
 	t.Cleanup(func() {
-		stopCmd := exec.Command("docker", "stop", containerName) //nolint:gosec // containerName is test-generated
-		_ = stopCmd.Run()                                        // Best effort cleanup
+		stopCmd := exec.CommandContext(
+			t.Context(),
+			"docker",
+			"stop",
+			containerName,
+		) //nolint:gosec // containerName is test-generated
+		_ = stopCmd.Run() // Best effort cleanup
 	})
 
 	// Get container IP address
-	ipCmd := exec.Command( //nolint:gosec // containerName is test-generated
+	ipCmd := exec.CommandContext(t.Context(), //nolint:gosec // containerName is test-generated
 		"docker", "inspect", "-f",
 		"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
 		containerName,
@@ -108,7 +120,13 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	sshReady := false
 
 	for range sshWaitRetries {
-		ncCmd := exec.Command("nc", "-z", containerIP, "22") //nolint:gosec // containerIP is from Docker inspect
+		ncCmd := exec.CommandContext(
+			t.Context(),
+			"nc",
+			"-z",
+			containerIP,
+			"22",
+		) //nolint:gosec // containerIP is from Docker inspect
 		if ncCmd.Run() == nil {
 			sshReady = true
 
@@ -136,7 +154,12 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	knownHostsPath := filepath.Join(sshDir, "known_hosts")
 
 	// Scan and add host keys to known_hosts
-	keyscanCmd := exec.Command("ssh-keyscan", "-H", containerIP) //nolint:gosec // containerIP from Docker inspect
+	keyscanCmd := exec.CommandContext(
+		t.Context(),
+		"ssh-keyscan",
+		"-H",
+		containerIP,
+	) //nolint:gosec // containerIP from Docker inspect
 
 	keyscanOutput, err := keyscanCmd.Output()
 	if err != nil {
@@ -161,7 +184,9 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 
 	// Cleanup: remove this host from known_hosts when test ends
 	t.Cleanup(func() {
-		_ = exec.Command("ssh-keygen", "-R", containerIP).Run() //nolint:gosec // containerIP from Docker
+		_ = exec.CommandContext(t.Context(), "ssh-keygen", "-R", containerIP).
+			Run()
+		//nolint:gosec // containerIP from Docker
 	})
 
 	// Add test key to SSH agent for this session
@@ -170,7 +195,11 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 		t.Fatalf("failed to set test key permissions: %v", err)
 	}
 
-	addKeyCmd := exec.Command("ssh-add", testKeyPath) //nolint:gosec // Test key path from source file location
+	addKeyCmd := exec.CommandContext(
+		t.Context(),
+		"ssh-add",
+		testKeyPath,
+	) //nolint:gosec // Test key path from source file location
 
 	addKeyOutput, err := addKeyCmd.CombinedOutput()
 	if err != nil {

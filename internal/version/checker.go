@@ -187,10 +187,7 @@ func compareVersions(tag1, tag2 string) int {
 	segments2 := strings.Split(parts2.Version, ".")
 
 	// Compare each segment
-	maxLen := len(segments1)
-	if len(segments2) > maxLen {
-		maxLen = len(segments2)
-	}
+	maxLen := max(len(segments2), len(segments1))
 
 	for idx := range maxLen {
 		var num1, num2 int

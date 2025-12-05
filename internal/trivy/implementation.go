@@ -90,6 +90,7 @@ func (scanner *trivyScanner) scanPlatform(
 
 	// Separate stdout and stderr to avoid mixing JSON with progress messages
 	var stdout, stderr strings.Builder
+
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

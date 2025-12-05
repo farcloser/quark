@@ -1,4 +1,3 @@
-// Package trust provides functions for configuring TLS certificate trust.
 package trust
 
 import (

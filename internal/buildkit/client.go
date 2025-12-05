@@ -100,61 +100,6 @@ func NewClient(sshConn ssh.Connection, nodeID string, log *slog.Logger) (*Client
 	return client, nil
 }
 
-// acceptLoop accepts connections on the local socket and forwards them to the remote Docker socket.
-func (c *Client) acceptLoop() {
-	defer c.wg.Done()
-
-	for {
-		localConn, err := c.listener.Accept()
-		if err != nil {
-			select {
-			case <-c.closed:
-				return // Normal shutdown
-			default:
-				c.log.Error("failed to accept connection", "error", err)
-
-				continue
-			}
-		}
-
-		c.wg.Add(1)
-
-		go c.handleConnection(localConn)
-	}
-}
-
-// handleConnection forwards data between local and remote connections.
-func (c *Client) handleConnection(localConn net.Conn) {
-	defer c.wg.Done()
-	defer localConn.Close()
-
-	// Connect to remote Docker socket
-	remoteConn, err := c.sshConn.DialUnix(remoteDockerSocket)
-	if err != nil {
-		c.log.Error("failed to connect to remote docker socket", "error", err)
-
-		return
-	}
-
-	defer remoteConn.Close()
-
-	// Bidirectional copy
-	done := make(chan struct{}, 2)
-
-	go func() {
-		_, _ = io.Copy(remoteConn, localConn)
-		done <- struct{}{}
-	}()
-
-	go func() {
-		_, _ = io.Copy(localConn, remoteConn)
-		done <- struct{}{}
-	}()
-
-	// Wait for either direction to finish
-	<-done
-}
-
 // Close shuts down the socket tunnel and cleans up resources.
 // If this client does not own the socket (it's reusing an existing one),
 // Close is a no-op.
@@ -268,22 +213,6 @@ func (c *Client) BuildMultiPlatform(
 	return digest, nil
 }
 
-// createMetadataFile creates a unique file path for build metadata in the node's runtime directory.
-func (c *Client) createMetadataFile() (string, error) {
-	// Use the node's socket directory for metadata files
-	socketDir := filepath.Dir(c.socketPath)
-
-	// Generate random suffix to avoid collisions between concurrent builds
-	var randomBytes [8]byte
-	if _, err := rand.Read(randomBytes[:]); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrGenerateRandomBytes, err)
-	}
-
-	filename := fmt.Sprintf("build-%s.json", hex.EncodeToString(randomBytes[:]))
-
-	return filepath.Join(socketDir, filename), nil
-}
-
 // readBuildDigest reads the image digest from the buildx metadata file.
 func readBuildDigest(metadataFile string) (string, error) {
 	//nolint:gosec
@@ -375,6 +304,79 @@ func (c *Client) EnsureBuilder(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// acceptLoop accepts connections on the local socket and forwards them to the remote Docker socket.
+func (c *Client) acceptLoop() {
+	defer c.wg.Done()
+
+	for {
+		localConn, err := c.listener.Accept()
+		if err != nil {
+			select {
+			case <-c.closed:
+				return // Normal shutdown
+			default:
+				c.log.Error("failed to accept connection", "error", err)
+
+				continue
+			}
+		}
+
+		c.wg.Add(1)
+
+		go c.handleConnection(localConn)
+	}
+}
+
+// handleConnection forwards data between local and remote connections.
+func (c *Client) handleConnection(localConn net.Conn) {
+	defer c.wg.Done()
+	defer localConn.Close()
+
+	// Connect to remote Docker socket
+	remoteConn, err := c.sshConn.DialUnix(remoteDockerSocket)
+	if err != nil {
+		c.log.Error("failed to connect to remote docker socket", "error", err)
+
+		return
+	}
+
+	defer remoteConn.Close()
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+
+	go func() {
+		_, _ = io.Copy(remoteConn, localConn)
+
+		done <- struct{}{}
+	}()
+
+	go func() {
+		_, _ = io.Copy(localConn, remoteConn)
+
+		done <- struct{}{}
+	}()
+
+	// Wait for either direction to finish
+	<-done
+}
+
+// createMetadataFile creates a unique file path for build metadata in the node's runtime directory.
+func (c *Client) createMetadataFile() (string, error) {
+	// Use the node's socket directory for metadata files
+	socketDir := filepath.Dir(c.socketPath)
+
+	// Generate random suffix to avoid collisions between concurrent builds
+	var randomBytes [8]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrGenerateRandomBytes, err)
+	}
+
+	filename := fmt.Sprintf("build-%s.json", hex.EncodeToString(randomBytes[:]))
+
+	return filepath.Join(socketDir, filename), nil
 }
 
 // runDocker executes a docker command with output passed through to os.Stdout/os.Stderr.

@@ -14,6 +14,7 @@ import (
 
 type syncAction struct {
 	resource.BaseResource[syncAction]
+
 	log    *slog.Logger
 	source *Image
 	dest   *Image

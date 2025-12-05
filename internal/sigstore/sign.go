@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"maps"
 
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
@@ -233,6 +234,7 @@ func signWithKey(payload []byte, opts *SignOptions) (signature, publicKeyPEM []b
 	// Try parsing as PKCS8 first, then EC.
 	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
 		var ok bool
+
 		privateKey, ok = key.(crypto.Signer)
 
 		if !ok {
@@ -315,9 +317,7 @@ func pushSignature(
 	}
 
 	// Add custom annotations.
-	for key, value := range customAnnotations {
-		annotations[key] = value
-	}
+	maps.Copy(annotations, customAnnotations)
 
 	// Create a static layer with the payload.
 	layer := static.NewLayer(payload, types.MediaType("application/vnd.dev.cosign.simplesigning.v1+json"))
