@@ -1,46 +1,16 @@
-// Package tools provides auto-installation for external tools.
-//
-// # Installation Strategy
-//
-// Tools are installed using `go install <import-path>@<commit-hash>` which provides:
-// - Immutable pinning: commit hashes never change (unlike tags which can be moved)
-// - Reproducible builds: same commit always produces same binary
-// - Security: we control exact source code being compiled
-//
-// # Version Pinning
-//
-// Commit hashes are used instead of version tags because:
-// - Git tags can be deleted or moved to different commits
-// - Commit SHA-256 hashes are cryptographically immutable
-// - Go modules convert commit hashes to pseudo-versions automatically
-//
-// Example: go install github.com/aquasecurity/trivy/cmd/trivy@9aabfd2
-// Go converts to: v0.0.0-20250205xxxxxx-9aabfd2 (pseudo-version)
-//
-// # Updating Tool Versions
-//
-// To update a tool:
-// 1. Find the release on GitHub (e.g., github.com/aquasecurity/trivy/releases)
-// 2. Get the commit hash for that release tag
-// 3. Update the Version field in the Tool struct
-// 4. Test with `go install <import-path>@<new-commit-hash>`
-//
-// Never use short commit hashes in production - always use at least 7 characters
-// for collision resistance (Go will accept and expand them).
 package tools
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
 
-	"github.com/rs/zerolog"
+	"github.com/farcloser/quark/internal/shared"
 )
-
-var errToolNotInPath = errors.New("tool installed but not found in PATH")
 
 // Tool represents an external tool that can be auto-installed.
 type Tool struct {
@@ -49,121 +19,99 @@ type Tool struct {
 	Version    string // Commit hash for immutable pinning (e.g., "9aabfd2")
 }
 
-//nolint:gochecknoglobals
-var (
-	// Trivy vulnerability scanner - pinned to v0.59.1 (commit 9aabfd2).
-	Trivy = Tool{
-		Name:       "trivy",
-		ImportPath: "github.com/aquasecurity/trivy/cmd/trivy",
-		Version:    "9aabfd2", // v0.59.1 released 2025-02-05
-	}
-
-	// Dockle container image linter - pinned to v0.4.15 (commit 5436857).
-	Dockle = Tool{
-		Name:       "dockle",
-		ImportPath: "github.com/goodwithtech/dockle/cmd/dockle",
-		Version:    "5436857", // v0.4.15 released 2025-01-06
-	}
-)
-
 // Installer manages tool installation.
 type Installer struct {
-	log       zerolog.Logger
-	installed map[string]bool
+	log       *slog.Logger
+	installed map[string]string
 	mu        sync.Mutex
 }
 
 // NewInstaller creates a new tool installer.
-func NewInstaller(log zerolog.Logger) *Installer {
+func NewInstaller(log *slog.Logger) *Installer {
 	return &Installer{
-		log:       log,
-		installed: make(map[string]bool),
+		log:       log.With("component", "installer"),
+		installed: make(map[string]string),
 	}
 }
 
 // Ensure ensures the tool is installed and available.
 // Returns the path to the tool binary.
-func (installer *Installer) Ensure(tool Tool) (string, error) {
+func (installer *Installer) Ensure(ctx context.Context, tool Tool) (string, error) {
+	// Check context before acquiring lock
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("%w: %w", shared.ErrCancelled, err)
+	}
+
 	installer.mu.Lock()
 	defer installer.mu.Unlock()
 
 	// Check if already verified in this session
-	if installer.installed[tool.Name] {
-		installer.log.Debug().
-			Str("tool", tool.Name).
-			Msg("tool already verified in this session")
+	if installer.installed[tool.Name] != "" {
+		installer.log.Debug("tool already verified in this session", "tool", tool.Name)
 
-		return tool.Name, nil
+		return installer.installed[tool.Name], nil
 	}
 
-	// Check if tool is in PATH
-	path, err := exec.LookPath(tool.Name)
-	if err == nil {
-		installer.log.Debug().
-			Str("tool", tool.Name).
-			Str("path", path).
-			Msg("tool found in PATH")
+	// Get the expected tool path (GOBIN or GOPATH/bin)
+	toolPath := installer.getToolPath(tool)
 
-		installer.installed[tool.Name] = true
+	// Check if tool exists at the expected path
+	if _, err := os.Stat(toolPath); err == nil {
+		installer.log.Debug("tool found", "tool", tool.Name, "path", toolPath)
 
-		return path, nil
+		installer.installed[tool.Name] = toolPath
+
+		return toolPath, nil
 	}
 
 	// Tool not found - install it
-	installer.log.Info().
-		Str("tool", tool.Name).
-		Str("version", tool.Version).
-		Msg("tool not found, installing...")
+	installer.log.Debug(
+		"tool not found, installing...",
+		"tool",
+		tool.Name,
+		"version",
+		tool.Version,
+	) //revive:disable-line:add-constant
 
-	if err := installer.install(tool); err != nil {
-		return "", fmt.Errorf("failed to install %s: %w", tool.Name, err)
+	if err := installer.install(ctx, tool); err != nil {
+		return "", err
 	}
 
 	// Verify installation
-	path, err = exec.LookPath(tool.Name)
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", errToolNotInPath, tool.Name)
+	if _, err := os.Stat(toolPath); err != nil {
+		return "", fmt.Errorf("%w: %s (expected at %s)", ErrToolNotInstalled, tool.Name, toolPath)
 	}
 
-	installer.log.Info().
-		Str("tool", tool.Name).
-		Str("path", path).
-		Msg("tool installed successfully")
+	installer.log.Debug("tool installed successfully", "tool", tool.Name, "path", toolPath)
 
-	installer.installed[tool.Name] = true
+	installer.installed[tool.Name] = toolPath
 
-	return path, nil
+	return toolPath, nil
 }
 
 // install installs a tool using go install with commit hash pinning.
-func (installer *Installer) install(tool Tool) error {
+func (installer *Installer) install(ctx context.Context, tool Tool) error {
 	// Build go install command with commit hash
 	// Example: go install github.com/aquasecurity/trivy/cmd/trivy@9aabfd2
 	importRef := fmt.Sprintf("%s@%s", tool.ImportPath, tool.Version)
 
-	installer.log.Debug().
-		Str("import_ref", importRef).
-		Msg("running go install")
+	installer.log.Debug("running go install", "import_ref", importRef)
 
 	//nolint:gosec
-	cmd := exec.Command("go", "install", importRef)
+	cmd := exec.CommandContext(ctx, "go", "install", importRef)
 	cmd.Env = os.Environ()
 
 	// Capture output for debugging
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		installer.log.Error().
-			Str("output", string(output)).
-			Msg("go install failed")
-
-		return fmt.Errorf("go install failed: %w\n%s", err, output)
+		return fmt.Errorf("%w: %w\n%s", ErrUnableToInstall, err, output)
 	}
 
 	return nil
 }
 
-// GetToolPath returns the expected path for a tool in GOPATH/bin or GOBIN.
-func (*Installer) GetToolPath(tool Tool) string {
+// getToolPath returns the expected path for a tool in GOPATH/bin or GOBIN.
+func (*Installer) getToolPath(tool Tool) string {
 	// Check GOBIN first
 	if gobin := os.Getenv("GOBIN"); gobin != "" {
 		return filepath.Join(gobin, tool.Name)

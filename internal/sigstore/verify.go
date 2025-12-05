@@ -1,9 +1,9 @@
-// Package sigstore provides OCI container image signature verification using sigstore-go.
 package sigstore
 
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,13 +11,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/crane"
-	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/rs/zerolog"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	protorekor "github.com/sigstore/protobuf-specs/gen/pb-go/rekor/v1"
@@ -25,6 +21,11 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	"github.com/sigstore/sigstore/pkg/cryptoutils"
+	sigstoresig "github.com/sigstore/sigstore/pkg/signature"
+
+	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/internal/registry"
 )
 
 // VerificationResult contains the outcome of signature verification.
@@ -32,35 +33,54 @@ type VerificationResult struct {
 	// Digest is the verified image digest (what was actually signed).
 	Digest string
 
-	// Signer contains the identity that signed the image.
-	Signer SignerInfo
+	// Keyless contains identity info if this is a keyless (Fulcio) signature.
+	// Nil if the signature is key-based.
+	Keyless *KeylessSignerInfo
+
+	// IsKeyBased is true if the signature was made with a private key (no certificate).
+	IsKeyBased bool
+
+	// Annotations are custom key-value pairs attached to the signature.
+	Annotations map[string]string
 }
 
-// SignerInfo contains information about the signer extracted from the certificate.
-type SignerInfo struct {
+// KeylessSignerInfo contains identity from a Fulcio certificate.
+type KeylessSignerInfo struct {
 	Subject string
 	Issuer  string
 }
 
-// VerifyOptions contains options for signature verification.
-type VerifyOptions struct {
-	// ImageRef is the image reference to verify.
-	ImageRef string
+// VerifyWithKeyOptions contains options for key-based signature verification.
+type VerifyWithKeyOptions struct {
+	// ImageRef is the parsed image reference to verify.
+	ImageRef reference.ImageReference
 
 	// Digest is the expected digest (sha256:...).
 	Digest string
 
-	// RegistryAuth provides credentials for the registry.
-	RegistryAuth *RegistryAuth
+	// PublicKey is the PEM-encoded public key to verify against.
+	PublicKey []byte
+
+	// RegistryClient is the registry client for fetching signature artifacts.
+	RegistryClient *registry.Client
 
 	// Logger for verification output.
-	Log zerolog.Logger
+	Log *slog.Logger
 }
 
-// RegistryAuth contains registry credentials.
-type RegistryAuth struct {
-	Username string
-	Password string
+// VerifyOptions contains options for signature verification.
+type VerifyOptions struct {
+	// ImageRef is the parsed image reference to verify.
+	ImageRef reference.ImageReference
+
+	// Digest is the expected digest (sha256:...).
+	Digest string
+
+	// RegistryClient is the registry client for fetching signature artifacts.
+	RegistryClient *registry.Client
+
+	// Logger for verification output.
+	Log *slog.Logger
 }
 
 // fulcioIssuerOID is the OID for the Fulcio OIDC Issuer extension (1.3.6.1.4.1.57264.1.1).
@@ -68,72 +88,63 @@ type RegistryAuth struct {
 //nolint:gochecknoglobals // OID constant defined at package level for clarity.
 var fulcioIssuerOID = []int{1, 3, 6, 1, 4, 1, 57264, 1, 1}
 
-// Signature verification errors.
-var (
-	// ErrNoSignatureFound indicates no signature artifact was found for the image.
-	ErrNoSignatureFound = errors.New("no signature found for image")
-
-	// ErrSignatureVerificationFailed indicates the signature failed cryptographic verification.
-	ErrSignatureVerificationFailed = errors.New("signature verification failed")
-
-	// ErrSignerNotTrusted indicates the signer identity doesn't match any trusted identity.
-	ErrSignerNotTrusted = errors.New("signer not trusted")
-
-	// ErrInvalidSignatureFormat indicates the signature has an invalid format.
-	ErrInvalidSignatureFormat = errors.New("invalid signature format")
-
-	// ErrMissingCertificate indicates certificate annotation is missing.
-	ErrMissingCertificate = errors.New("missing certificate annotation")
-
-	// ErrInvalidPEM indicates PEM certificate decoding failed.
-	ErrInvalidPEM = errors.New("failed to decode PEM certificate")
-
-	// ErrMissingPayload indicates Payload field is missing from bundle.
-	ErrMissingPayload = errors.New("missing Payload in bundle")
-
-	// ErrMissingLogIndex indicates logIndex field is missing.
-	ErrMissingLogIndex = errors.New("missing logIndex")
-
-	// ErrMissingLogID indicates logID field is missing.
-	ErrMissingLogID = errors.New("missing logID")
-
-	// ErrMissingIntegratedTime indicates integratedTime field is missing.
-	ErrMissingIntegratedTime = errors.New("missing integratedTime")
-
-	// ErrMissingTimestamp indicates SignedEntryTimestamp field is missing.
-	ErrMissingTimestamp = errors.New("missing SignedEntryTimestamp")
-
-	// ErrMissingBody indicates body field is missing.
-	ErrMissingBody = errors.New("missing body")
-
-	// ErrMissingSignature indicates signature annotation is missing.
-	ErrMissingSignature = errors.New("missing signature annotation")
-
-	// ErrUnsupportedDigestAlgorithm indicates an unsupported digest algorithm.
-	ErrUnsupportedDigestAlgorithm = errors.New("unsupported digest algorithm")
-
-	// ErrNoCertificateInBundle indicates the bundle has no certificate.
-	ErrNoCertificateInBundle = errors.New("no certificate in bundle")
-
-	// ErrMissingDigestInPayload indicates docker-manifest-digest is missing from signature payload.
-	ErrMissingDigestInPayload = errors.New("missing docker-manifest-digest in payload")
+const (
+	sigTagFormat          = "%s:%s-%s.sig"
+	digestAlgorithmPrefix = "sha256:"
+	certAnnotation        = "dev.sigstore.cosign/certificate"
 )
+
+// reservedAnnotationPrefixes are annotation prefixes used by sigstore/cosign internally.
+// These are filtered out when extracting custom user annotations.
+//
+//nolint:gochecknoglobals // Package-level constant for annotation filtering.
+var reservedAnnotationPrefixes = []string{
+	"dev.cosignproject.cosign/",
+	"dev.sigstore.cosign/",
+}
+
+// extractCustomAnnotations filters out sigstore-reserved annotations and returns only custom ones.
+func extractCustomAnnotations(annotations map[string]string) map[string]string {
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	custom := make(map[string]string)
+
+	for key, value := range annotations {
+		isReserved := false
+
+		for _, prefix := range reservedAnnotationPrefixes {
+			if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+				isReserved = true
+
+				break
+			}
+		}
+
+		if !isReserved {
+			custom[key] = value
+		}
+	}
+
+	if len(custom) == 0 {
+		return nil
+	}
+
+	return custom
+}
 
 // Verify verifies the cryptographic signature on a container image.
 // Returns the verified digest and signer information on success.
 // Note: This only verifies the signature is valid - caller must check if the signer is trusted.
 func Verify(ctx context.Context, opts *VerifyOptions) (*VerificationResult, error) {
-	opts.Log.Debug().
-		Str("image", opts.ImageRef).
-		Str("digest", opts.Digest).
-		Msg("verifying image signature")
-
-	// Build remote options.
-	remoteOpts, craneOpts := buildRemoteOptions(ctx, opts.RegistryAuth)
+	opts.Log.DebugContext(ctx, "verifying image signature",
+		"image", opts.ImageRef.String(), //revive:disable-line:add-constant
+		"digest", opts.Digest) //revive:disable-line:add-constant
 
 	// 1. Fetch the signature from the registry.
 	// This also validates that the payload contains the expected image digest.
-	sigResult, err := fetchSignatureBundle(opts.ImageRef, opts.Digest, remoteOpts, craneOpts)
+	sigResult, err := fetchSignatureBundle(ctx, opts.RegistryClient, opts.ImageRef, opts.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +152,7 @@ func Verify(ctx context.Context, opts *VerifyOptions) (*VerificationResult, erro
 	// 2. Get trusted root from Sigstore's public good instance.
 	trustedRoot, err := getTrustedRoot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get trusted root: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetTrustedRoot, err)
 	}
 
 	// 3. Create verifier.
@@ -157,7 +168,7 @@ func Verify(ctx context.Context, opts *VerifyOptions) (*VerificationResult, erro
 
 	signatureVerifier, err := verify.NewVerifier(trustedRoot, verifierOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create verifier: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCreateVerifier, err)
 	}
 
 	// 4. Create artifact policy with the payload bytes.
@@ -169,7 +180,7 @@ func Verify(ctx context.Context, opts *VerifyOptions) (*VerificationResult, erro
 	// Use a permissive identity policy that accepts any valid Fulcio certificate.
 	anySignerPolicy, err := verify.NewShortCertificateIdentity("", ".*", "", ".*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create permissive identity policy: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCreateIdentityPolicy, err)
 	}
 
 	result, err := signatureVerifier.Verify(sigResult.Bundle, verify.NewPolicy(
@@ -181,77 +192,107 @@ func Verify(ctx context.Context, opts *VerifyOptions) (*VerificationResult, erro
 	}
 
 	// 6. Extract signer info from the result.
-	signerInfo := extractSignerInfo(result)
+	keylessInfo := extractKeylessSignerInfo(result)
 
-	opts.Log.Debug().
-		Str("digest", "sha256:"+sigResult.ImageDigest).
-		Str("signer_subject", signerInfo.Subject).
-		Str("signer_issuer", signerInfo.Issuer).
-		Msg("signature cryptographically valid")
+	opts.Log.DebugContext(ctx, "signature cryptographically valid",
+		"digest", "sha256:"+sigResult.ImageDigest, //revive:disable-line:add-constant
+		"signer_subject", keylessInfo.Subject,
+		"signer_issuer", keylessInfo.Issuer)
 
 	return &VerificationResult{
-		Digest: "sha256:" + sigResult.ImageDigest,
-		Signer: signerInfo,
+		Digest:      digestAlgorithmPrefix + sigResult.ImageDigest,
+		Keyless:     keylessInfo,
+		IsKeyBased:  false,
+		Annotations: sigResult.Annotations,
 	}, nil
 }
 
-// buildRemoteOptions constructs authentication options for registry operations.
-func buildRemoteOptions(ctx context.Context, auth *RegistryAuth) ([]remote.Option, []crane.Option) {
-	remoteOpts := []remote.Option{remote.WithContext(ctx)}
-	craneOpts := []crane.Option{crane.WithContext(ctx)}
+// VerifyWithPublicKey verifies a key-based signature against a provided public key.
+// This is for images signed with cosign using a private key (not keyless/Fulcio).
+// Uses github.com/sigstore/sigstore for signature verification.
+func VerifyWithPublicKey(ctx context.Context, opts *VerifyWithKeyOptions) (*VerificationResult, error) {
+	opts.Log.DebugContext(ctx, "verifying key-based signature",
+		"image", opts.ImageRef.String(), //revive:disable-line:add-constant
+		"digest", opts.Digest) //revive:disable-line:add-constant
 
-	if auth != nil && auth.Username != "" {
-		basicAuth := &authn.Basic{
-			Username: auth.Username,
-			Password: auth.Password,
-		}
-		remoteOpts = append(remoteOpts, remote.WithAuth(basicAuth))
-		craneOpts = append(craneOpts, crane.WithAuth(basicAuth))
-	}
-
-	return remoteOpts, craneOpts
-}
-
-// signatureBundleResult contains the fetched signature bundle and related data.
-type signatureBundleResult struct {
-	Bundle       *bundle.Bundle
-	ImageDigest  string // The image digest (hex, without algorithm prefix)
-	PayloadBytes []byte // The simple signing payload bytes (for verification)
-}
-
-// fetchSignatureBundle fetches the signature from the registry and builds a sigstore bundle.
-func fetchSignatureBundle(
-	imageRef, digest string,
-	remoteOpts []remote.Option,
-	craneOpts []crane.Option,
-) (*signatureBundleResult, error) {
-	// Parse the image reference.
-	ref, err := name.ParseReference(imageRef)
+	// 1. Fetch the signature from the registry.
+	sigResult, err := fetchSignatureForKeyVerification(ctx, opts.RegistryClient, opts.ImageRef, opts.Digest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse image reference: %w", err)
+		return nil, err
 	}
 
-	// If digest not provided, get it from the registry.
-	if digest == "" {
-		desc, err := remote.Get(ref, remoteOpts...)
+	// 2. Parse the public key using sigstore cryptoutils.
+	pubKey, err := cryptoutils.UnmarshalPEMToPublicKey(opts.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrParsePublicKey, err)
+	}
+
+	// 3. Create verifier using sigstore signature package.
+	verifier, err := sigstoresig.LoadVerifier(pubKey, crypto.SHA256)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrLoadVerifier, err)
+	}
+
+	// 4. Verify the signature over the payload.
+	// The signature is already base64-decoded in sigResult.
+	if err := verifier.VerifySignature(
+		bytes.NewReader(sigResult.Signature),
+		bytes.NewReader(sigResult.PayloadBytes),
+	); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSignatureVerificationFailed, err)
+	}
+
+	opts.Log.DebugContext(ctx, "key-based signature cryptographically valid", //revive:disable-line:add-constant
+		"digest", "sha256:"+sigResult.ImageDigest)
+
+	return &VerificationResult{
+		Digest:      digestAlgorithmPrefix + sigResult.ImageDigest,
+		Keyless:     nil,
+		IsKeyBased:  true,
+		Annotations: sigResult.Annotations,
+	}, nil
+}
+
+// keyBasedSignatureResult contains data needed for key-based signature verification.
+type keyBasedSignatureResult struct {
+	ImageDigest  string            // The image digest (hex, without algorithm prefix)
+	PayloadBytes []byte            // The simple signing payload bytes (for verification)
+	Signature    []byte            // The decoded signature bytes
+	Annotations  map[string]string // Custom annotations attached to the signature
+}
+
+// fetchSignatureForKeyVerification fetches signature data needed for key-based verification.
+func fetchSignatureForKeyVerification(
+	ctx context.Context,
+	client *registry.Client,
+	imageRef reference.ImageReference,
+	dgst string,
+) (*keyBasedSignatureResult, error) {
+	// If dgst not provided, get it from the registry.
+	if dgst == "" {
+		var err error
+
+		dgst, err = client.GetDigest(ctx, imageRef)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get image descriptor: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrGetImageDescriptor, err)
 		}
-
-		digest = desc.Digest.String()
 	}
 
-	// Parse digest to get algorithm and hex.
-	digestHash, err := v1.NewHash(digest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse digest: %w", err)
-	}
+	digDigest := reference.Digest(dgst)
 
 	// Construct the signature reference: sha256-<hash>.sig.
-	sigTag := ref.Context().Tag(fmt.Sprintf("%s-%s.sig", digestHash.Algorithm, digestHash.Hex))
+	sigTagStr := fmt.Sprintf(sigTagFormat,
+		imageRef.Name(),
+		digDigest.Algorithm(),
+		digDigest.Hex())
+
+	sigRef, err := reference.Parse(sigTagStr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, err)
+	}
 
 	// Get the signature image to access layers.
-	sigImage, err := crane.Pull(sigTag.Name(), craneOpts...)
+	sigImage, err := client.GetImageHandle(ctx, *sigRef)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, err)
 	}
@@ -259,12 +300,116 @@ func fetchSignatureBundle(
 	// Get manifest to check layer metadata.
 	sigManifest, err := sigImage.Manifest()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signature manifest: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetSignatureManifest, err)
+	}
+
+	// Ensure there is at least one layer.
+	if len(sigManifest.Layers) == 0 {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, ErrNoLayersInSignature)
+	}
+
+	simpleSigning := &sigManifest.Layers[0]
+
+	// Fetch the actual simple signing payload blob.
+	layers, err := sigImage.Layers()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrGetSignatureLayers, err)
+	}
+
+	payloadReader, err := layers[0].Uncompressed()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReadPayloadLayer, err)
+	}
+	defer payloadReader.Close()
+
+	var payloadBuf bytes.Buffer
+	if _, err := payloadBuf.ReadFrom(payloadReader); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReadPayload, err)
+	}
+
+	payloadBytes := payloadBuf.Bytes()
+
+	// Verify the payload contains the expected image dgst.
+	embeddedDigest, err := extractDigestFromPayload(payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrExtractDigestFromPayload, err)
+	}
+
+	if embeddedDigest != dgst {
+		return nil, fmt.Errorf(
+			"%w: payload dgst %s does not match expected %s",
+			ErrSignatureVerificationFailed,
+			embeddedDigest,
+			dgst,
+		)
+	}
+
+	// Get the signature from annotations.
+	sigB64, hasSig := simpleSigning.Annotations["dev.cosignproject.cosign/signature"]
+	if !hasSig {
+		return nil, ErrMissingSignature
+	}
+
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDecodeSignature, err)
+	}
+
+	// Extract custom annotations (filter out sigstore-reserved ones).
+	customAnnotations := extractCustomAnnotations(simpleSigning.Annotations)
+
+	return &keyBasedSignatureResult{
+		ImageDigest:  digDigest.Hex(),
+		PayloadBytes: payloadBytes,
+		Signature:    sig,
+		Annotations:  customAnnotations,
+	}, nil
+}
+
+// signatureBundleResult contains the fetched signature bundle and related data.
+type signatureBundleResult struct {
+	Bundle         *bundle.Bundle
+	ImageDigest    string            // The image digest (hex, without algorithm prefix)
+	PayloadBytes   []byte            // The simple signing payload bytes (for verification)
+	HasCertificate bool              // True if the signature has a Fulcio certificate (keyless)
+	Annotations    map[string]string // Custom annotations attached to the signature
+}
+
+// fetchSignatureBundle fetches the signature from the registry and builds a sigstore bundle.
+func fetchSignatureBundle(
+	ctx context.Context,
+	client *registry.Client,
+	imageRef reference.ImageReference,
+	dgst string,
+) (*signatureBundleResult, error) {
+	digDigest := reference.Digest(dgst)
+
+	// Construct the signature reference: sha256-<hash>.sig.
+	sigTagStr := fmt.Sprintf(sigTagFormat,
+		imageRef.Name(),
+		digDigest.Algorithm(),
+		digDigest.Hex())
+
+	sigRef, err := reference.Parse(sigTagStr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, err)
+	}
+
+	// Get the signature image to access layers.
+	sigImage, err := client.GetImageHandle(ctx, *sigRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, err)
+	}
+
+	// Get manifest to check layer metadata.
+	sigManifest, err := sigImage.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrGetSignatureManifest, err)
 	}
 
 	// Ensure there is at least one layer with the expected media type.
 	if len(sigManifest.Layers) == 0 {
-		return nil, fmt.Errorf("%w: no layers in signature manifest", ErrNoSignatureFound)
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, ErrNoLayersInSignature)
 	}
 
 	simpleSigning := &sigManifest.Layers[0]
@@ -279,53 +424,53 @@ func fetchSignatureBundle(
 	// Fetch the actual simple signing payload blob.
 	layers, err := sigImage.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signature layers: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetSignatureLayers, err)
 	}
 
 	payloadReader, err := layers[0].Uncompressed()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read payload layer: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrReadPayloadLayer, err)
 	}
 	defer payloadReader.Close()
 
 	var payloadBuf bytes.Buffer
 	if _, err := payloadBuf.ReadFrom(payloadReader); err != nil {
-		return nil, fmt.Errorf("failed to read payload: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrReadPayload, err)
 	}
 
 	payloadBytes := payloadBuf.Bytes()
 
-	// Verify the payload contains the expected image digest.
+	// Verify the payload contains the expected image dgst.
 	embeddedDigest, err := extractDigestFromPayload(payloadBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract digest from payload: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrExtractDigestFromPayload, err)
 	}
 
-	if embeddedDigest != digest {
+	if embeddedDigest != dgst {
 		return nil, fmt.Errorf(
-			"%w: payload digest %s does not match expected %s",
+			"%w: payload dgst %s does not match expected %s",
 			ErrSignatureVerificationFailed,
 			embeddedDigest,
-			digest,
+			dgst,
 		)
 	}
 
 	// Build verification material.
 	verificationMaterial, err := buildVerificationMaterial(simpleSigning)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build verification material: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBuildVerificationMaterial, err)
 	}
 
 	// Build message signature.
 	msgSignature, err := buildMessageSignature(simpleSigning)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build message signature: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBuildMessageSignature, err)
 	}
 
 	// Construct the bundle.
 	bundleMediaType, err := bundle.MediaTypeString("0.1")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bundle media type: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetBundleMediaType, err)
 	}
 
 	protoBundle := protobundle.Bundle{
@@ -336,14 +481,105 @@ func fetchSignatureBundle(
 
 	resultBundle, err := bundle.NewBundle(&protoBundle)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create bundle: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCreateBundle, err)
 	}
 
+	// Check if certificate is present.
+	_, hasCert := simpleSigning.Annotations[certAnnotation]
+
+	// Extract custom annotations (filter out sigstore-reserved ones).
+	customAnnotations := extractCustomAnnotations(simpleSigning.Annotations)
+
 	return &signatureBundleResult{
-		Bundle:       resultBundle,
-		ImageDigest:  digestHash.Hex,
-		PayloadBytes: payloadBytes,
+		Bundle:         resultBundle,
+		ImageDigest:    digDigest.Hex(),
+		PayloadBytes:   payloadBytes,
+		HasCertificate: hasCert,
+		Annotations:    customAnnotations,
 	}, nil
+}
+
+// signatureInfoResult contains minimal signature information for inspection.
+type signatureInfoResult struct {
+	ImageDigest    string            // The image digest (hex, without algorithm prefix)
+	HasCertificate bool              // True if the signature has a Fulcio certificate (keyless)
+	Bundle         *bundle.Bundle    // Only populated for keyless signatures
+	Annotations    map[string]string // Custom annotations attached to the signature
+}
+
+// fetchSignatureInfo fetches basic signature information without full bundle construction.
+// This is used for inspection where we just need to know if a signature exists and its type.
+func fetchSignatureInfo(
+	ctx context.Context,
+	client *registry.Client,
+	imageRef reference.ImageReference,
+	dgst string,
+) (*signatureInfoResult, error) {
+	// If dgst not provided, get it from the registry.
+	if dgst == "" {
+		var err error
+
+		dgst, err = client.GetDigest(ctx, imageRef)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrGetImageDescriptor, err)
+		}
+	}
+
+	digDigest := reference.Digest(dgst)
+
+	// Construct the signature reference: sha256-<hash>.sig.
+	sigTagStr := fmt.Sprintf(sigTagFormat,
+		imageRef.Name(),
+		digDigest.Algorithm(),
+		digDigest.Hex())
+
+	sigRef, err := reference.Parse(sigTagStr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, err)
+	}
+
+	// Get the signature image to access layers.
+	sigImage, err := client.GetImageHandle(ctx, *sigRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, err)
+	}
+
+	// Get manifest to check layer metadata.
+	sigManifest, err := sigImage.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrGetSignatureManifest, err)
+	}
+
+	// Ensure there is at least one layer.
+	if len(sigManifest.Layers) == 0 {
+		return nil, fmt.Errorf("%w: %w", ErrNoSignatureFound, ErrNoLayersInSignature)
+	}
+
+	simpleSigning := &sigManifest.Layers[0]
+
+	// Check if certificate is present (keyless) or not (key-based).
+	_, hasCert := simpleSigning.Annotations[certAnnotation]
+
+	// Extract custom annotations (filter out sigstore-reserved ones).
+	customAnnotations := extractCustomAnnotations(simpleSigning.Annotations)
+
+	result := &signatureInfoResult{
+		ImageDigest:    digDigest.Hex(),
+		HasCertificate: hasCert,
+		Annotations:    customAnnotations,
+	}
+
+	// For keyless signatures, build the full bundle to extract signer info.
+	if hasCert {
+		bundleResult, err := fetchSignatureBundle(ctx, client, imageRef, dgst)
+		if err != nil {
+			return nil, err
+		}
+
+		result.Bundle = bundleResult.Bundle
+	}
+
+	return result, nil
 }
 
 // extractDigestFromPayload extracts the image digest from a simple signing payload.
@@ -352,15 +588,15 @@ func extractDigestFromPayload(payload []byte) (string, error) {
 	// Local struct matches sigstore simple signing payload format.
 	//nolint:tagliatelle // JSON field name is defined by sigstore spec, not our choice.
 	var data struct {
-		Critical struct { //nolint:revive // nested-structs: anonymous struct for one-time JSON parsing.
-			Image struct { //nolint:revive // nested-structs: anonymous struct for one-time JSON parsing.
+		Critical struct { //revive:disable:nested-structs // anonymous struct for one-time JSON parsing.
+			Image struct { //revive:disable:nested-structs // anonymous struct for one-time JSON parsing.
 				DockerManifestDigest string `json:"docker-manifest-digest"`
 			} `json:"image"`
 		} `json:"critical"`
 	}
 
 	if err := json.Unmarshal(payload, &data); err != nil {
-		return "", fmt.Errorf("failed to parse payload: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrParsePayload, err)
 	}
 
 	if data.Critical.Image.DockerManifestDigest == "" {
@@ -375,13 +611,13 @@ func buildVerificationMaterial(layer *v1.Descriptor) (*protobundle.VerificationM
 	// Get X.509 certificate chain.
 	certChain, err := extractCertificateChain(layer)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract certificate chain: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrExtractCertificateChain, err)
 	}
 
 	// Get transparency log entries.
 	tlogEntries, err := extractTlogEntries(layer)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract tlog entries: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrExtractTlogEntries, err)
 	}
 
 	return &protobundle.VerificationMaterial{
@@ -392,7 +628,7 @@ func buildVerificationMaterial(layer *v1.Descriptor) (*protobundle.VerificationM
 
 // extractCertificateChain extracts the X.509 certificate chain from layer annotations.
 func extractCertificateChain(layer *v1.Descriptor) (*protobundle.VerificationMaterial_X509CertificateChain, error) {
-	pemCert, hasCert := layer.Annotations["dev.sigstore.cosign/certificate"]
+	pemCert, hasCert := layer.Annotations[certAnnotation]
 	if !hasCert {
 		return nil, ErrMissingCertificate
 	}
@@ -404,7 +640,7 @@ func extractCertificateChain(layer *v1.Descriptor) (*protobundle.VerificationMat
 
 	// Verify it's a valid X.509 certificate.
 	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-		return nil, fmt.Errorf("invalid X.509 certificate: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidX509Certificate, err)
 	}
 
 	return &protobundle.VerificationMaterial_X509CertificateChain{
@@ -426,7 +662,7 @@ func extractTlogEntries(layer *v1.Descriptor) ([]*protorekor.TransparencyLogEntr
 
 	var jsonData map[string]any
 	if err := json.Unmarshal([]byte(bundleAnnotation), &jsonData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal bundle annotation: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnmarshalBundleAnnotation, err)
 	}
 
 	payload, payloadOK := jsonData["Payload"].(map[string]any)
@@ -446,7 +682,7 @@ func extractTlogEntries(layer *v1.Descriptor) ([]*protorekor.TransparencyLogEntr
 
 	logID, err := hex.DecodeString(logIDHex)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode logID: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeLogID, err)
 	}
 
 	integratedTime, timeOK := payload["integratedTime"].(float64)
@@ -461,7 +697,7 @@ func extractTlogEntries(layer *v1.Descriptor) ([]*protorekor.TransparencyLogEntr
 
 	signedEntryTimestamp, err := base64.StdEncoding.DecodeString(setB64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode SignedEntryTimestamp: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeTimestamp, err)
 	}
 
 	bodyB64, bodyOK := payload["body"].(string)
@@ -471,13 +707,13 @@ func extractTlogEntries(layer *v1.Descriptor) ([]*protorekor.TransparencyLogEntr
 
 	bodyBytes, err := base64.StdEncoding.DecodeString(bodyB64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode body: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeBody, err)
 	}
 
 	// Extract kind version from body.
 	var bodyJSON map[string]any
 	if err := json.Unmarshal(bodyBytes, &bodyJSON); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal body: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnmarshalBody, err)
 	}
 
 	apiVersion, _ := bodyJSON["apiVersion"].(string) //nolint:revive // optional field
@@ -512,7 +748,7 @@ func buildMessageSignature(layer *v1.Descriptor) (*protobundle.Bundle_MessageSig
 
 	sig, err := base64.StdEncoding.DecodeString(sigB64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode signature: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeSignature, err)
 	}
 
 	// Get digest algorithm.
@@ -531,7 +767,7 @@ func buildMessageSignature(layer *v1.Descriptor) (*protobundle.Bundle_MessageSig
 
 	digestBytes, err := hex.DecodeString(layer.Digest.Hex)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode digest: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeDigest, err)
 	}
 
 	return &protobundle.Bundle_MessageSignature{
@@ -550,82 +786,85 @@ func getTrustedRoot() (root.TrustedMaterialCollection, error) {
 	// Use Sigstore's public good TUF instance.
 	client, err := tuf.New(tuf.DefaultOptions())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TUF client: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCreateTUFClient, err)
 	}
 
 	trustedRootJSON, err := client.GetTarget("trusted_root.json")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get trusted root: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetTrustedRoot, err)
 	}
 
 	trustedRoot, err := root.NewTrustedRootFromJSON(trustedRootJSON)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse trusted root: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrParseTrustedRoot, err)
 	}
 
 	return root.TrustedMaterialCollection{trustedRoot}, nil
 }
 
-// extractSignerInfo extracts signer information from the verification result.
-func extractSignerInfo(result *verify.VerificationResult) SignerInfo {
+// extractKeylessSignerInfo extracts keyless signer information from the verification result.
+func extractKeylessSignerInfo(result *verify.VerificationResult) *KeylessSignerInfo {
 	if result == nil || result.Signature == nil || result.Signature.Certificate == nil {
-		return SignerInfo{}
+		return nil
 	}
 
 	cert := result.Signature.Certificate
 
 	// certificate.Summary has SubjectAlternativeName and Issuer fields directly.
-	return SignerInfo{
+	return &KeylessSignerInfo{
 		Subject: cert.SubjectAlternativeName,
 		Issuer:  cert.Issuer,
 	}
 }
 
-// DiscoverSignerOptions contains options for discovering the signer of an image.
-type DiscoverSignerOptions struct {
-	// ImageRef is the image reference (e.g., "docker.io/library/alpine:3.20").
-	ImageRef string
+// InspectOptions contains options for inspecting an image signature.
+type InspectOptions struct {
+	// ImageRef is the parsed image reference.
+	ImageRef reference.ImageReference
 
 	// Digest is the image digest (sha256:...). If empty, will be resolved from registry.
 	Digest string
 
-	// RegistryAuth provides credentials for the registry.
-	RegistryAuth *RegistryAuth
+	// RegistryClient is the registry client for fetching signature artifacts.
+	RegistryClient *registry.Client
 
 	// Logger for output.
-	Log zerolog.Logger
+	Log *slog.Logger
 }
 
-// DiscoverSignerResult contains information about an image's signature.
-type DiscoverSignerResult struct {
+// InspectResult contains information about an image's signature.
+type InspectResult struct {
 	// IsSigned indicates whether a signature was found for the image.
 	IsSigned bool
 
-	// Signer contains the identity that signed the image (only valid if IsSigned is true).
-	Signer SignerInfo
-
 	// Digest is the image digest the signature applies to.
 	Digest string
+
+	// Keyless contains identity info if this is a keyless (Fulcio) signature.
+	// Nil if the signature is key-based or unsigned.
+	Keyless *KeylessSignerInfo
+
+	// IsKeyBased is true if the signature was made with a private key (no certificate).
+	IsKeyBased bool
+
+	// Annotations are custom key-value pairs attached to the signature.
+	Annotations map[string]string
 }
 
-// DiscoverSigner checks if an image is signed and extracts the signer identity
-// WITHOUT requiring a trust policy. This allows users to discover who signed
-// an image before deciding whether to trust them.
-func DiscoverSigner(ctx context.Context, opts *DiscoverSignerOptions) (*DiscoverSignerResult, error) {
-	opts.Log.Debug().
-		Str("image", opts.ImageRef).
-		Str("digest", opts.Digest).
-		Msg("discovering image signer")
+// Inspect checks if an image is signed and extracts signature information
+// WITHOUT requiring a trust policy. This allows users to discover what kind
+// of signature exists before deciding whether to trust it.
+func Inspect(ctx context.Context, opts *InspectOptions) (*InspectResult, error) {
+	opts.Log.DebugContext(ctx, "inspecting image signature",
+		"image", opts.ImageRef.String(), //revive:disable-line:add-constant
+		"digest", opts.Digest) //revive:disable-line:add-constant
 
-	// Build remote options.
-	remoteOpts, craneOpts := buildRemoteOptions(ctx, opts.RegistryAuth)
-
-	// Try to fetch the signature bundle.
-	sigResult, err := fetchSignatureBundle(opts.ImageRef, opts.Digest, remoteOpts, craneOpts)
+	// Try to fetch the signature.
+	sigResult, err := fetchSignatureInfo(ctx, opts.RegistryClient, opts.ImageRef, opts.Digest)
 	if err != nil {
 		// Check if it's "no signature found" vs. other error.
 		if errors.Is(err, ErrNoSignatureFound) {
-			return &DiscoverSignerResult{
+			return &InspectResult{
 				IsSigned: false,
 				Digest:   opts.Digest,
 			}, nil
@@ -634,31 +873,40 @@ func DiscoverSigner(ctx context.Context, opts *DiscoverSignerOptions) (*Discover
 		return nil, err
 	}
 
-	// Extract signer info from the bundle's certificate (without verification).
-	signerInfo, err := extractSignerFromBundle(sigResult.Bundle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract signer from bundle: %w", err)
+	result := &InspectResult{
+		IsSigned:    true,
+		Digest:      digestAlgorithmPrefix + sigResult.ImageDigest,
+		Keyless:     nil,
+		IsKeyBased:  true,
+		Annotations: sigResult.Annotations,
 	}
 
-	return &DiscoverSignerResult{
-		IsSigned: true,
-		Signer:   signerInfo,
-		Digest:   "sha256:" + sigResult.ImageDigest,
-	}, nil
+	// If there's a certificate, it's keyless signing.
+	if sigResult.HasCertificate {
+		keylessInfo, err := extractKeylessSignerFromBundle(sigResult.Bundle)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrExtractKeylessSigner, err)
+		}
+
+		result.Keyless = keylessInfo
+		result.IsKeyBased = false
+	}
+
+	return result, nil
 }
 
-// extractSignerFromBundle extracts signer information directly from the bundle's certificate
+// extractKeylessSignerFromBundle extracts keyless signer information directly from the bundle's certificate
 // without performing full verification.
-func extractSignerFromBundle(b *bundle.Bundle) (SignerInfo, error) {
+func extractKeylessSignerFromBundle(b *bundle.Bundle) (*KeylessSignerInfo, error) {
 	// Get verification content which provides access to the certificate.
 	verificationContent, err := b.VerificationContent()
 	if err != nil {
-		return SignerInfo{}, fmt.Errorf("failed to get verification content: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetVerificationContent, err)
 	}
 
 	cert := verificationContent.Certificate()
 	if cert == nil {
-		return SignerInfo{}, ErrNoCertificateInBundle
+		return nil, ErrNoCertificateInBundle
 	}
 
 	// Extract subject from certificate extensions (Fulcio SAN).
@@ -667,7 +915,7 @@ func extractSignerFromBundle(b *bundle.Bundle) (SignerInfo, error) {
 	// Extract issuer from certificate extensions (Fulcio OIDC issuer).
 	issuer := extractIssuerFromCert(cert)
 
-	return SignerInfo{
+	return &KeylessSignerInfo{
 		Subject: subject,
 		Issuer:  issuer,
 	}, nil

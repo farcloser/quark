@@ -2,129 +2,47 @@ package registry_test
 
 import (
 	"errors"
+	"log/slog"
 	"testing"
 
-	"github.com/rs/zerolog"
-
+	"github.com/farcloser/quark/internal/reference"
 	"github.com/farcloser/quark/internal/registry"
+	"github.com/farcloser/quark/internal/shared"
 )
 
-// INTENTION: Invalid image references should return ErrParseImageReference.
-func TestClient_GetImage_InvalidReference(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		ref     string
-		wantErr error
-	}{
-		{
-			name:    "empty reference",
-			ref:     "",
-			wantErr: registry.ErrParseImageReference,
-		},
-		{
-			name:    "invalid characters",
-			ref:     "invalid@@@reference",
-			wantErr: registry.ErrParseImageReference,
-		},
-		{
-			name:    "malformed digest",
-			ref:     "alpine@notadigest",
-			wantErr: registry.ErrParseImageReference,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-			_, err := client.GetImage(t.Context(), tt.ref)
-
-			if err == nil {
-				t.Fatal("GetImage() error = nil, want error")
-			}
-
-			if !errors.Is(err, tt.wantErr) {
-				t.Errorf("GetImage() error = %v, want error wrapping %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-// INTENTION: Invalid image references should return ErrParseImageReference.
-func TestClient_GetDigest_InvalidReference(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		ref     string
-		wantErr error
-	}{
-		{
-			name:    "empty reference",
-			ref:     "",
-			wantErr: registry.ErrParseImageReference,
-		},
-		{
-			name:    "invalid characters",
-			ref:     "invalid@@@reference",
-			wantErr: registry.ErrParseImageReference,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-			_, err := client.GetDigest(t.Context(), tt.ref)
-
-			if err == nil {
-				t.Fatal("GetDigest() error = nil, want error")
-			}
-
-			if !errors.Is(err, tt.wantErr) {
-				t.Errorf("GetDigest() error = %v, want error wrapping %v", err, tt.wantErr)
-			}
-		})
-	}
+func discardLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
 }
 
 // INTENTION: Invalid source references should return ErrParseSourceReference.
 func TestClient_CopyImage_InvalidSourceReference(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
+	client := registry.NewClient(&shared.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	dstClient := registry.NewClient(&shared.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
-	_, err := client.CopyImage(t.Context(), "invalid@@@reference", "ghcr.io/valid/image:latest", dstClient)
+	// Parse valid destination reference.
+	dstRef, err := reference.Parse("ghcr.io/valid/image:latest")
+	if err != nil {
+		t.Fatalf("Failed to parse destination reference: %v", err)
+	}
 
+	// Parse an invalid source - this should fail at parse time
+	_, err = reference.Parse("invalid@@@reference")
 	if err == nil {
-		t.Fatal("CopyImage() error = nil, want error")
+		t.Fatal("Expected parse error for invalid reference")
 	}
 
-	if !errors.Is(err, registry.ErrParseSourceReference) {
-		t.Errorf("CopyImage() error = %v, want error wrapping %v", err, registry.ErrParseSourceReference)
+	// Test with a valid reference that doesn't exist (will fail at registry access)
+	srcRef, err := reference.Parse("docker.io/nonexistent/image:v999")
+	if err != nil {
+		t.Fatalf("Failed to parse source reference: %v", err)
 	}
-}
 
-// INTENTION: Invalid destination references should return ErrParseDestinationReference.
-func TestClient_CopyImage_InvalidDestinationReference(t *testing.T) {
-	t.Parallel()
-
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
-
-	_, err := client.CopyImage(t.Context(), "docker.io/library/alpine:latest", "invalid@@@reference", dstClient)
-
+	_, err = client.CopyImage(t.Context(), *srcRef, *dstRef, dstClient)
+	// This will fail because the image doesn't exist, not because of parse error
 	if err == nil {
-		t.Fatal("CopyImage() error = nil, want error")
-	}
-
-	if !errors.Is(err, registry.ErrParseDestinationReference) {
-		t.Errorf("CopyImage() error = %v, want error wrapping %v", err, registry.ErrParseDestinationReference)
+		t.Fatal("CopyImage() error = nil, want error for non-existent image")
 	}
 }
 
@@ -132,123 +50,74 @@ func TestClient_CopyImage_InvalidDestinationReference(t *testing.T) {
 func TestClient_CopyIndex_InvalidSourceReference(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
+	client := registry.NewClient(&shared.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	dstClient := registry.NewClient(&shared.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
-	err := client.CopyIndex(t.Context(), "invalid@@@reference", "ghcr.io/valid/image:latest", dstClient)
-
-	if err == nil {
-		t.Fatal("CopyIndex() error = nil, want error")
+	// Parse valid destination reference.
+	dstRef, err := reference.Parse("ghcr.io/valid/image:latest")
+	if err != nil {
+		t.Fatalf("Failed to parse destination reference: %v", err)
 	}
 
-	if !errors.Is(err, registry.ErrParseSourceReference) {
-		t.Errorf("CopyIndex() error = %v, want error wrapping %v", err, registry.ErrParseSourceReference)
+	// Parse an invalid source - this should fail at parse time
+	_, err = reference.Parse("invalid@@@reference")
+	if err == nil {
+		t.Fatal("Expected parse error for invalid reference")
+	}
+
+	// Test with a valid reference that doesn't exist (will fail at registry access)
+	srcRef, err := reference.Parse("docker.io/nonexistent/image:v999")
+	if err != nil {
+		t.Fatalf("Failed to parse source reference: %v", err)
+	}
+
+	err = client.CopyIndex(t.Context(), *srcRef, *dstRef, dstClient)
+	// This will fail because the image doesn't exist
+	if err == nil {
+		t.Fatal("CopyIndex() error = nil, want error for non-existent image")
 	}
 }
 
-// INTENTION: Invalid destination references should return ErrParseDestinationReference.
-func TestClient_CopyIndex_InvalidDestinationReference(t *testing.T) {
+// INTENTION: GetImage returns proper error for non-existent image.
+func TestClient_GetImage_NonExistent(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-	dstClient := registry.NewClient("ghcr.io", "", "", zerolog.Nop())
+	client := registry.NewClient(&shared.RegistryCredentials{Domain: "docker.io"}, discardLogger())
 
-	err := client.CopyIndex(t.Context(), "docker.io/library/alpine:latest", "invalid@@@reference", dstClient)
-
-	if err == nil {
-		t.Fatal("CopyIndex() error = nil, want error")
+	ref, err := reference.Parse("docker.io/nonexistent/image:v999.999.999")
+	if err != nil {
+		t.Fatalf("Failed to parse reference: %v", err)
 	}
 
-	if !errors.Is(err, registry.ErrParseDestinationReference) {
-		t.Errorf("CopyIndex() error = %v, want error wrapping %v", err, registry.ErrParseDestinationReference)
+	_, err = client.GetImage(t.Context(), *ref)
+	if err == nil {
+		t.Fatal("GetImage() error = nil, want error for non-existent image")
+	}
+
+	if !errors.Is(err, registry.ErrGetImage) {
+		t.Errorf("GetImage() error = %v, want error wrapping %v", err, registry.ErrGetImage)
 	}
 }
 
-// INTENTION: Invalid image references should return ErrParseImageReference.
-func TestClient_GetPlatformDigests_InvalidReference(t *testing.T) {
+// INTENTION: Invalid reference strings fail at parse time.
+func TestParseReference_Invalid(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-
-	_, err := client.GetPlatformDigests(t.Context(), "invalid@@@reference")
-
-	if err == nil {
-		t.Fatal("GetPlatformDigests() error = nil, want error")
-	}
-
-	if !errors.Is(err, registry.ErrParseImageReference) {
-		t.Errorf("GetPlatformDigests() error = %v, want error wrapping %v", err, registry.ErrParseImageReference)
-	}
-}
-
-// INTENTION: Invalid source references should return ErrParseSourceReference.
-func TestClient_FetchPlatformImage_InvalidSourceReference(t *testing.T) {
-	t.Parallel()
-
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-
-	_, err := client.FetchPlatformImage(
-		t.Context(),
+	invalidRefs := []string{
+		"",
 		"invalid@@@reference",
-		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-	)
-
-	if err == nil {
-		t.Fatal("FetchPlatformImage() error = nil, want error")
+		"alpine@notadigest",
+		":::invalid/repo:tag",
 	}
 
-	if !errors.Is(err, registry.ErrParseSourceReference) {
-		t.Errorf("FetchPlatformImage() error = %v, want error wrapping %v", err, registry.ErrParseSourceReference)
-	}
-}
+	for _, ref := range invalidRefs {
+		t.Run(ref, func(t *testing.T) {
+			t.Parallel()
 
-// INTENTION: Invalid manifest references should return ErrParseManifestReference.
-func TestClient_PushManifestList_InvalidReference(t *testing.T) {
-	t.Parallel()
-
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-
-	_, err := client.PushManifestList(t.Context(), "invalid@@@reference", nil)
-
-	if err == nil {
-		t.Fatal("PushManifestList() error = nil, want error")
-	}
-
-	if !errors.Is(err, registry.ErrParseManifestReference) {
-		t.Errorf("PushManifestList() error = %v, want error wrapping %v", err, registry.ErrParseManifestReference)
-	}
-}
-
-// INTENTION: Invalid image references should return ErrParseImageReference.
-func TestClient_CheckExists_InvalidReference(t *testing.T) {
-	t.Parallel()
-
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-
-	_, err := client.CheckExists(t.Context(), "invalid@@@reference")
-
-	if err == nil {
-		t.Fatal("CheckExists() error = nil, want error")
-	}
-
-	if !errors.Is(err, registry.ErrParseImageReference) {
-		t.Errorf("CheckExists() error = %v, want error wrapping %v", err, registry.ErrParseImageReference)
-	}
-}
-
-// INTENTION: Invalid image references should return ErrParseImageReference.
-func TestClient_GetImageHandle_InvalidReference(t *testing.T) {
-	t.Parallel()
-
-	client := registry.NewClient("docker.io", "", "", zerolog.Nop())
-
-	_, err := client.GetImageHandle(t.Context(), "invalid@@@reference")
-
-	if err == nil {
-		t.Fatal("GetImageHandle() error = nil, want error")
-	}
-
-	if !errors.Is(err, registry.ErrParseImageReference) {
-		t.Errorf("GetImageHandle() error = %v, want error wrapping %v", err, registry.ErrParseImageReference)
+			_, err := reference.Parse(ref)
+			if err == nil {
+				t.Errorf("Parse(%q) error = nil, want error", ref)
+			}
+		})
 	}
 }

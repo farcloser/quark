@@ -15,22 +15,19 @@ Provides automatic installation and version management for external CLI tools re
 
 ```go
 type Tool struct {
-    Name       string // Binary name
-    ImportPath string // Go import path
-    Version    string // Commit hash
+    Name       string // Binary name (e.g., "trivy")
+    ImportPath string // Go import path (e.g., "github.com/aquasecurity/trivy/cmd/trivy")
+    Version    string // Commit hash for immutable pinning (e.g., "9aabfd2")
 }
 
 type Installer struct { ... }
-func NewInstaller(log zerolog.Logger) *Installer
+func NewInstaller(log *slog.Logger) *Installer
 
 // Installation operations
 func (i *Installer) Ensure(tool Tool) (string, error)
-func (i *Installer) GetToolPath(tool Tool) string
-
-// Predefined tools
-var Trivy Tool  // v0.59.1 pinned to commit 9aabfd2
-var Dockle Tool // v0.4.15 pinned to commit 5436857
 ```
+
+Note: Tool definitions (trivy, dockle) are defined in their respective packages (`internal2/trivy`, `internal2/dockle`), not in this package.
 
 ## Design
 
@@ -45,9 +42,9 @@ var Dockle Tool // v0.4.15 pinned to commit 5436857
 Tools are installed via `go install <import-path>@<commit-hash>`:
 
 1. Check if tool already verified in current session (fast path)
-2. Check if tool exists in PATH
+2. Check if tool exists at expected path (GOBIN or GOPATH/bin)
 3. If not found, run `go install` with pinned commit hash
-4. Verify installation succeeded and tool is now in PATH
+4. Verify installation succeeded
 5. Cache result for session
 
 ## Version Pinning
@@ -62,7 +59,7 @@ Commit hashes provide cryptographic immutability:
 To update a tool version:
 1. Find the release on GitHub
 2. Get the commit hash for that release tag
-3. Update the `Version` field in the Tool definition
+3. Update the `Version` field in the Tool definition (in the consuming package)
 4. Test with `go install <import-path>@<new-commit-hash>`
 
 ## Dependencies

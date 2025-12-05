@@ -3,71 +3,81 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 
-	"github.com/rs/zerolog/log"
-
 	"github.com/farcloser/quark/sdk"
-	"github.com/farcloser/quark/sdk/logger"
+	"github.com/farcloser/quark/sdk/build"
+	"github.com/farcloser/quark/sdk/platform"
 )
 
 func main() {
 	ctx := context.Background()
-	logger.ConfigureWithDefaults(ctx)
 
-	plan := sdk.NewPlan("build-example")
+	plan := sdk.NewPlan()
 
 	// Note: This example requires:
 	// 1. A local Dockerfile at ./Dockerfile
 	// 2. Registry credentials configured via environment variables
 	// 3. Docker buildx configured for multi-platform builds
-	//
+
 	// Configure registry for pushing built images
-	plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
+	ghcr := sdk.NewRegistry(sdk.RegistryOpts{
 		Domain:   "ghcr.io",
 		Username: os.Getenv("GHCR_USERNAME"),
 		Token:    os.Getenv("GHCR_TOKEN"),
-	}))
-
-	// Define local buildkit nodes for multi-platform builds
-	amd64Builder, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{
-		Name:     "amd64-builder",
-		Endpoint: "localhost",
-		Platform: sdk.PlatformAMD64,
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create amd64 build node")
-	}
 
-	plan.AddBuildNode(amd64Builder)
-
-	arm64Builder, err := sdk.NewBuildNode(&sdk.BuildNodeOpts{
-		Name:     "arm64-builder",
-		Endpoint: "localhost",
-		Platform: sdk.PlatformARM64,
+	// Define target image
+	targetImage := ghcr.NewImage(sdk.ImageOpts{
+		Name:    "myorg/myimage",
+		Version: "v1.0.0",
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create arm64 build node")
-	}
 
-	plan.AddBuildNode(arm64Builder)
-
-	// Build multi-platform image using local docker buildx
-	// Replace with your actual image tag
-	if _, err := plan.Build(&sdk.BuildArgs{
-		Name:       "example-build",
+	// Create builder with build context
+	builder := sdk.NewBuilder(sdk.BuildOpts{
 		Context:    ".",
 		Dockerfile: "Dockerfile",
-		Nodes:      []*sdk.BuildNode{amd64Builder, arm64Builder},
-		Tag:        "ghcr.io/myorg/myimage:latest",
-	}); err != nil {
-		log.Fatal().Err(err).Msg("failed to create build")
-	}
+	})
+
+	// Define build node (SSH endpoint with Docker)
+	node := sdk.NewNode(sdk.NodeOpts{
+		Endpoint:    "sshweet",
+		Concurrency: 2, // Allow 2 concurrent builds on this node
+	})
+
+	// Build multi-platform image
+	// The least busy node is selected; if all nodes are at capacity,
+	// the build blocks until a slot becomes available.
+	builtImage := builder.Build(targetImage, []*sdk.Node{node}, &build.Options{
+		Platforms: []*platform.Platform{&platform.AMD64, &platform.ARM64},
+	})
+
+	// Optional: Sign the built image
+	// For GitHub Actions keyless signing (Fulcio/OIDC):
+	//   signer := sdk.NewSigner(sdk.SignerOpts{
+	//       OIDCIssuer: "https://token.actions.githubusercontent.com",
+	//       OIDCToken:  os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+	//   })
+	//   signedImage := builtImage.Sign(signer, nil)
+	//   plan.Add(signedImage)
+	//
+	// For private key signing:
+	//   signer := sdk.NewSigner(sdk.SignerOpts{
+	//       PrivateKey:  privateKeyPEM,
+	//       KeyPassword: []byte(os.Getenv("KEY_PASSWORD")),
+	//   })
+	//   signedImage := builtImage.Sign(signer, nil)
+	//   plan.Add(signedImage)
+
+	// Add built image to plan - dependencies are auto-discovered
+	plan.Add(builtImage)
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {
-		log.Fatal().Err(err).Msg("build failed")
+		slog.Error("build failed", "error", err)
+		os.Exit(1)
 	}
 
-	log.Info().Msg("build completed successfully")
+	slog.Info("build completed successfully")
 }

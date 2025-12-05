@@ -1,36 +1,31 @@
 package sdk
 
-import "strings"
+import (
+	"github.com/farcloser/quark/dev/resource"
+)
 
-// SignerIdentity represents a trusted signer identity for signature verification.
-// Used for keyless (Fulcio) signing where identity is attested via OIDC.
-type SignerIdentity struct {
-	// Subject is the identity subject pattern (email, OIDC subject, GitHub workflow path).
-	// Supports wildcard patterns:
-	//   - Exact match: "ci@mycompany.com"
-	//   - Prefix match (ends with *): "https://github.com/org/repo/.github/workflows/*"
-	Subject string `json:"subject"`
-
-	// Issuer is the OIDC token issuer URL (exact match).
-	// Examples: "https://accounts.google.com", "https://token.actions.githubusercontent.com"
-	Issuer string `json:"issuer"`
+// Signer represents a signing configuration.
+type Signer struct {
+	resource.BaseResource[Signer]
+	opts SignerOpts
 }
 
-// Matches checks if an actual signer matches this trusted identity.
-// Subject supports prefix matching when ending with *.
-// Issuer requires exact match.
-func (s SignerIdentity) Matches(actualSubject, actualIssuer string) bool {
-	// Issuer must match exactly.
-	if s.Issuer != actualIssuer {
-		return false
+// SignerOpts contains configuration options for creating a signer.
+type SignerOpts struct {
+	// Keyless OIDC
+	OIDCIssuer string
+	OIDCToken  string
+	// Key-based
+	PrivateKey  []byte
+	KeyPassword []byte
+}
+
+// NewSigner creates a new Signer with the given options.
+func NewSigner(opts SignerOpts) *Signer {
+	s := &Signer{
+		opts: opts,
 	}
+	s.BaseResource = resource.NewBaseResource(s, "signer")
 
-	// Subject: if ends with *, use prefix match; otherwise exact match.
-	if strings.HasSuffix(s.Subject, "*") {
-		prefix := strings.TrimSuffix(s.Subject, "*")
-
-		return strings.HasPrefix(actualSubject, prefix)
-	}
-
-	return s.Subject == actualSubject
+	return s
 }

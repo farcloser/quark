@@ -1,10 +1,10 @@
-// Package registry provides OCI registry client operations.
 package registry
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -18,50 +18,65 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/types"
-	"github.com/rs/zerolog"
-)
 
-var (
-	// ErrParseImageReference indicates failure parsing an image reference.
-	ErrParseImageReference = errors.New("failed to parse image reference")
-	// ErrParseSourceReference indicates failure parsing a source reference.
-	ErrParseSourceReference = errors.New("failed to parse source reference")
-	// ErrParseDestinationReference indicates failure parsing a destination reference.
-	ErrParseDestinationReference = errors.New("failed to parse destination reference")
-	// ErrParseManifestReference indicates failure parsing a manifest reference.
-	ErrParseManifestReference = errors.New("failed to parse manifest reference")
-	// ErrGetImage indicates failure retrieving an image from the registry.
-	ErrGetImage = errors.New("failed to get image")
-	// ErrGetImageIndex indicates failure retrieving an image index from the registry.
-	ErrGetImageIndex = errors.New("failed to get image index")
+	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/internal/shared"
 )
 
 // Client wraps OCI registry operations.
 type Client struct {
-	host     string
-	username string
-	password string
-	log      zerolog.Logger
+	creds *shared.RegistryCredentials
+	log   *slog.Logger
 }
 
 // NewClient creates a new registry client.
-func NewClient(host, username, password string, log zerolog.Logger) *Client {
+func NewClient(creds *shared.RegistryCredentials, log *slog.Logger) *Client {
+	if creds == nil {
+		creds = &shared.RegistryCredentials{}
+	}
+
 	return &Client{
-		host:     host,
-		username: username,
-		password: password,
-		log:      log,
+		creds: creds,
+		log:   log,
 	}
 }
 
-// GetImage retrieves an image descriptor from the registry.
-func (client *Client) GetImage(ctx context.Context, imageRef string) (remote.Descriptor, error) {
-	ref, err := name.ParseReference(imageRef)
+// Ping verifies authentication with the registry by negotiating credentials
+// against the /v2/ endpoint. This is a lightweight preflight check.
+func (client *Client) Ping(ctx context.Context) error {
+	reg, err := name.NewRegistry(client.creds.Domain)
 	if err != nil {
-		return remote.Descriptor{}, fmt.Errorf("%w: %w", ErrParseImageReference, err)
+		return fmt.Errorf("%w: invalid registry %q: %w", shared.ErrInvalidArgument, client.creds.Domain, err)
 	}
 
-	desc, err := remote.Get(ref, client.remoteOptionsWithContext(ctx)...)
+	// Use Catalog to verify authentication - this uses the same remote options
+	// (auth, retry, context) as all other methods for consistency.
+	// Even if catalog listing is not supported, authentication is verified.
+	_, err = remote.Catalog(ctx, reg, client.remoteOptionsWithContext(ctx)...)
+	if err != nil {
+		// Check if this is an auth error vs catalog not supported
+		var transportErr *transport.Error
+		if errors.As(err, &transportErr) {
+			// Auth failures are 401/403, catalog not supported would be different
+			if transportErr.StatusCode == http.StatusUnauthorized ||
+				transportErr.StatusCode == http.StatusForbidden {
+				return fmt.Errorf("%w: %w", ErrAuthFailed, err)
+			}
+			// Other errors (404, 501) mean auth succeeded but catalog isn't available
+			// This is fine for a ping - auth was verified
+			return nil
+		}
+
+		// Non-transport errors (network, etc.) are real failures
+		return fmt.Errorf("%w: %w", ErrAuthFailed, err)
+	}
+
+	return nil
+}
+
+// GetImage retrieves an image descriptor from the registry.
+func (client *Client) GetImage(ctx context.Context, imageRef reference.ImageReference) (remote.Descriptor, error) {
+	desc, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return remote.Descriptor{}, fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
@@ -70,86 +85,80 @@ func (client *Client) GetImage(ctx context.Context, imageRef string) (remote.Des
 }
 
 // CopyImage copies an image from source to destination.
-// Returns the source image object (fetched by digest) for trusted digest computation.
-func (client *Client) CopyImage(ctx context.Context, srcRef, dstRef string, dstClient *Client) (v1.Image, error) {
-	srcNameRef, err := name.ParseReference(srcRef)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseSourceReference, err)
-	}
-
-	dstNameRef, err := name.ParseReference(dstRef)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseDestinationReference, err)
-	}
-
-	client.log.Debug().
-		Str("source", srcRef).
-		Str("destination", dstRef).
-		Msg("copying image")
+// Returns the digest of the copied image (computed from source, not destination).
+func (client *Client) CopyImage(
+	ctx context.Context,
+	srcRef, dstRef reference.ImageReference,
+	dstClient *Client,
+) (string, error) {
+	client.log.DebugContext(
+		ctx,
+		"copying image",
+		"source",
+		srcRef.String(),
+		"destination",
+		dstRef.String(),
+	) //revive:disable-line:add-constant
 
 	// Get source image (TRUSTED - must be called with digest reference)
-	img, err := remote.Image(srcNameRef, client.remoteOptionsWithContext(ctx)...)
+	img, err := remote.Image(toGCRRef(srcRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get source image: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrGetSourceImage, err)
 	}
 
 	// Push to destination
-	if err := remote.Write(dstNameRef, img, dstClient.remoteOptionsWithContext(ctx)...); err != nil {
-		return nil, fmt.Errorf("failed to write destination image: %w", err)
+	if err := remote.Write(toGCRRef(dstRef), img, dstClient.remoteOptionsWithContext(ctx)...); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrWriteDestinationImage, err)
 	}
 
-	// Return the TRUSTED source image (not fetched from destination)
-	// This ensures digest is computed from content we verified by digest
-	return img, nil
+	// Compute digest from TRUSTED source image (not from destination)
+	digest, err := img.Digest()
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrComputeDigest, err)
+	}
+
+	return digest.String(), nil
 }
 
 // CopyIndex copies a multi-platform image index from source to destination.
-func (client *Client) CopyIndex(ctx context.Context, srcRef, dstRef string, dstClient *Client) error {
-	srcNameRef, err := name.ParseReference(srcRef)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrParseSourceReference, err)
-	}
-
-	dstNameRef, err := name.ParseReference(dstRef)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrParseDestinationReference, err)
-	}
-
-	client.log.Debug().
-		Str("source", srcRef).
-		Str("destination", dstRef).
-		Msg("copying image index")
+func (client *Client) CopyIndex(ctx context.Context, srcRef, dstRef reference.ImageReference, dstClient *Client) error {
+	client.log.DebugContext(
+		ctx,
+		"copying image index",
+		"source",
+		srcRef.String(),
+		"destination",
+		dstRef.String(),
+	) //revive:disable-line:add-constant
 
 	// Get source index
-	idx, err := remote.Index(srcNameRef, client.remoteOptionsWithContext(ctx)...)
+	idx, err := remote.Index(toGCRRef(srcRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
-		return fmt.Errorf("failed to get source index: %w", err)
+		return fmt.Errorf("%w: %w", ErrGetSourceIndex, err)
 	}
 
 	// Push to destination
-	if err := remote.WriteIndex(dstNameRef, idx, dstClient.remoteOptionsWithContext(ctx)...); err != nil {
-		return fmt.Errorf("failed to write destination index: %w", err)
+	if err := remote.WriteIndex(toGCRRef(dstRef), idx, dstClient.remoteOptionsWithContext(ctx)...); err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteDestinationIndex, err)
 	}
 
 	return nil
 }
 
 // GetPlatformDigests returns platform-specific digests for a multi-platform image.
-func (client *Client) GetPlatformDigests(ctx context.Context, imageRef string) (map[string]string, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseImageReference, err)
-	}
-
+func (client *Client) GetPlatformDigests(
+	ctx context.Context,
+	imageRef reference.ImageReference,
+) (map[string]string, error) {
 	// Get the image index
-	idx, err := remote.Index(ref, client.remoteOptionsWithContext(ctx)...)
+	idx, err := remote.Index(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrGetImageIndex, err)
 	}
 
 	manifest, err := idx.IndexManifest()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get index manifest: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetIndexManifest, err)
 	}
 
 	// Extract platform digests
@@ -165,42 +174,129 @@ func (client *Client) GetPlatformDigests(ctx context.Context, imageRef string) (
 	return platformDigests, nil
 }
 
-// FetchPlatformImage fetches a specific platform image by digest from source.
+// SyncMultiPlatform syncs a multi-platform image from source to destination.
+// It fetches each requested platform from source and creates a manifest list at destination.
+// Returns the digest of the created manifest list (computed locally for security).
+func (client *Client) SyncMultiPlatform(
+	ctx context.Context,
+	srcImage, dstImage reference.ImageReference,
+	srcClient *Client,
+	platforms []string,
+) (string, error) {
+	// Get platform-specific digests from source
+	platformDigests, err := srcClient.GetPlatformDigests(ctx, srcImage)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrGetImageIndex, err)
+	}
+
+	client.log.DebugContext(
+		ctx,
+		"found platforms in source image",
+		"platforms",
+		len(platformDigests),
+	) //revive:disable-line:add-constant
+
+	// Fetch each requested platform and collect images
+	platformImages := make(map[string]v1.Image)
+
+	for platform, digest := range platformDigests {
+		// Check context cancellation before each platform
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("%w: %w", shared.ErrContext, err)
+		}
+
+		// Skip platforms not in the requested list
+		if !containsString(platforms, platform) {
+			client.log.DebugContext(
+				ctx,
+				"skipping platform not in requested list",
+				"platform",
+				platform,
+			) //revive:disable-line:add-constant
+
+			continue
+		}
+
+		client.log.DebugContext(
+			ctx,
+			"fetching platform image",
+			"platform",
+			platform,
+			"digest",
+			digest,
+		) //revive:disable-line:add-constant
+
+		img, err := srcClient.fetchPlatformImage(ctx, srcImage, digest)
+		if err != nil {
+			return "", fmt.Errorf("%w %s: %w", ErrFetchPlatformImage, platform, err)
+		}
+
+		platformImages[platform] = img
+	}
+
+	// Create and push manifest list to destination
+	client.log.DebugContext(
+		ctx,
+		"creating manifest list",
+		"destination", //revive:disable-line:add-constant
+		dstImage.String(),
+	)
+
+	manifestDigest, err := client.pushManifestList(ctx, dstImage, platformImages)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrPushManifestList, err)
+	}
+
+	client.log.DebugContext(
+		ctx,
+		"manifest list created successfully",
+		"digest",
+		manifestDigest,
+	) //revive:disable-line:add-constant
+
+	return manifestDigest, nil
+}
+
+// containsString checks if a string slice contains a specific string.
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+
+	return false
+}
+
+// fetchPlatformImage fetches a specific platform image by digest from source.
 // Returns the source image object (fetched by digest) for trusted manifest list creation.
-// The image is NOT pushed - it will be pushed by digest when PushManifestList is called.
-func (client *Client) FetchPlatformImage(ctx context.Context, srcRef, platformDigest string) (v1.Image, error) {
-	// Parse source with digest
-	srcDigestRef := fmt.Sprintf("%s@%s", srcRef, platformDigest)
+func (client *Client) fetchPlatformImage(
+	ctx context.Context,
+	imageRef reference.ImageReference,
+	platformDigest string,
+) (v1.Image, error) {
+	// Build digest reference from the image repository
+	srcDigestRef := fmt.Sprintf("%s@%s", toGCRRef(imageRef).Context(), platformDigest)
 
 	srcNameRef, err := name.ParseReference(srcDigestRef)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrParseSourceReference, err)
 	}
 
-	client.log.Debug().
-		Str("source", srcDigestRef).
-		Msg("fetching platform image")
+	client.log.DebugContext(ctx, "fetching platform image", "source", srcDigestRef) //revive:disable-line:add-constant
 
 	// Get source image by digest (TRUSTED - fetched by known digest)
 	img, err := remote.Image(srcNameRef, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get source image: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrGetSourceImage, err)
 	}
 
-	// Return the TRUSTED source image (not fetched from destination)
-	// This ensures manifest list is built from content we verified by digest
-	// Note: remote.WriteIndex will push this image by digest (not by tag) when creating the manifest list
 	return img, nil
 }
 
 // GetDigest returns the digest for an image reference.
-func (client *Client) GetDigest(ctx context.Context, imageRef string) (string, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrParseImageReference, err)
-	}
-
-	desc, err := remote.Get(ref, client.remoteOptionsWithContext(ctx)...)
+func (client *Client) GetDigest(ctx context.Context, imageRef reference.ImageReference) (string, error) {
+	desc, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
@@ -208,23 +304,22 @@ func (client *Client) GetDigest(ctx context.Context, imageRef string) (string, e
 	return desc.Digest.String(), nil
 }
 
-// PushManifestList creates and pushes a manifest list from platform-specific images.
-// platformImages is a map of platform string (e.g., "linux/amd64") to image reference.
+// pushManifestList creates and pushes a manifest list from platform-specific images.
+// platformImages is a map of platform string (e.g., "linux/amd64") to image.
 // Returns the digest of the created manifest list.
-func (client *Client) PushManifestList(
+func (client *Client) pushManifestList(
 	ctx context.Context,
-	manifestRef string,
+	manifestRef reference.ImageReference,
 	platformImages map[string]v1.Image,
 ) (string, error) {
-	client.log.Debug().
-		Str("manifest", manifestRef).
-		Int("platforms", len(platformImages)).
-		Msg("creating and pushing manifest list")
-
-	ref, err := name.ParseReference(manifestRef)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrParseManifestReference, err)
-	}
+	client.log.DebugContext( //revive:disable-line:add-constant
+		ctx,
+		"creating and pushing manifest list",
+		"manifest",
+		manifestRef.String(),
+		"platforms",
+		len(platformImages),
+	)
 
 	// Start with an empty index
 	idx := mutate.IndexMediaType(empty.Index, types.DockerManifestList)
@@ -241,7 +336,13 @@ func (client *Client) PushManifestList(
 	// Add each platform image to the index in sorted order
 	for _, platform := range platforms {
 		img := platformImages[platform]
-		client.log.Debug().Str("platform", platform).Msg("adding platform to manifest list")
+
+		client.log.DebugContext(
+			ctx,
+			"adding platform to manifest list",
+			"platform", //revive:disable-line:add-constant
+			platform,
+		)
 
 		// Extract OS and architecture from platform string (e.g., "linux/amd64")
 		parts := strings.SplitN(platform, "/", 2)
@@ -260,17 +361,22 @@ func (client *Client) PushManifestList(
 	}
 
 	// Push the manifest list
-	if err := remote.WriteIndex(ref, idx, client.remoteOptionsWithContext(ctx)...); err != nil {
-		return "", fmt.Errorf("failed to push manifest list: %w", err)
+	if err := remote.WriteIndex(toGCRRef(manifestRef), idx, client.remoteOptionsWithContext(ctx)...); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrPushManifestList, err)
 	}
 
 	// Get the digest of the pushed manifest list
 	digest, err := idx.Digest()
 	if err != nil {
-		return "", fmt.Errorf("failed to get manifest list digest: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrGetManifestListDigest, err)
 	}
 
-	client.log.Debug().Str("digest", digest.String()).Msg("manifest list pushed successfully")
+	client.log.DebugContext(
+		ctx,
+		"manifest list pushed successfully",
+		"digest", //revive:disable-line:add-constant
+		digest.String(),
+	)
 
 	return digest.String(), nil
 }
@@ -278,13 +384,8 @@ func (client *Client) PushManifestList(
 // CheckExists checks if an image exists in the registry.
 // Returns (false, nil) only for 404/not found errors.
 // Returns (false, err) for all other errors (network, auth, etc.).
-func (client *Client) CheckExists(ctx context.Context, imageRef string) (bool, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrParseImageReference, err)
-	}
-
-	_, err = remote.Get(ref, client.remoteOptionsWithContext(ctx)...)
+func (client *Client) CheckExists(ctx context.Context, imageRef reference.ImageReference) (bool, error) {
+	_, err := remote.Get(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		// Check if this is a 404/not found error
 		var transportErr *transport.Error
@@ -293,7 +394,7 @@ func (client *Client) CheckExists(ctx context.Context, imageRef string) (bool, e
 			return false, nil
 		}
 		// Other errors (network, auth, etc.) should be returned
-		return false, fmt.Errorf("failed to check image existence: %w", err)
+		return false, fmt.Errorf("%w: %w", ErrCheckImageExistence, err)
 	}
 
 	return true, nil
@@ -301,13 +402,8 @@ func (client *Client) CheckExists(ctx context.Context, imageRef string) (bool, e
 
 // GetImageHandle fetches a v1.Image for the given reference.
 // This is needed for creating manifest lists.
-func (client *Client) GetImageHandle(ctx context.Context, imageRef string) (v1.Image, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseImageReference, err)
-	}
-
-	img, err := remote.Image(ref, client.remoteOptionsWithContext(ctx)...)
+func (client *Client) GetImageHandle(ctx context.Context, imageRef reference.ImageReference) (v1.Image, error) {
+	img, err := remote.Image(toGCRRef(imageRef), client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrGetImage, err)
 	}
@@ -315,24 +411,53 @@ func (client *Client) GetImageHandle(ctx context.Context, imageRef string) (v1.I
 	return img, nil
 }
 
-// ListTags returns all tags for a repository.
-func (client *Client) ListTags(ctx context.Context, repository string) ([]string, error) {
-	repo, err := name.NewRepository(repository)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse repository: %w", err)
+// WriteImage pushes an image to the registry at the given reference.
+func (client *Client) WriteImage(ctx context.Context, imageRef reference.ImageReference, img v1.Image) error {
+	if err := remote.Write(toGCRRef(imageRef), img, client.remoteOptionsWithContext(ctx)...); err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteImage, err)
 	}
+
+	return nil
+}
+
+// ListTags returns all tags for an image reference's repository.
+func (client *Client) ListTags(ctx context.Context, imageRef reference.ImageReference) ([]string, error) {
+	repo := toGCRRef(imageRef).Context()
 
 	tags, err := remote.List(repo, client.remoteOptionsWithContext(ctx)...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list tags: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrListTags, err)
 	}
 
 	return tags, nil
 }
 
-// remoteOptions returns remote options with authentication and retry configuration.
-func (client *Client) remoteOptions() []remote.Option {
-	opts := []remote.Option{
+// toGCRRef converts an ImageReference to a go-containerregistry Reference.
+// This is a private helper to encapsulate the go-containerregistry dependency.
+func toGCRRef(imageRef reference.ImageReference) name.Reference {
+	// By the time we call this, we have already parsed and validated the image
+	ref, err := name.ParseReference(imageRef.String())
+	if err != nil {
+		panic(err)
+	}
+
+	return ref
+}
+
+// remoteOptionsWithContext returns remote options with context, authentication, and retry configuration.
+func (client *Client) remoteOptionsWithContext(ctx context.Context) []remote.Option {
+	auth := authn.Anonymous
+	if client.creds.Username != "" && client.creds.Token != "" {
+		auth = &authn.Basic{
+			Username: client.creds.Username,
+			Password: client.creds.Token,
+		}
+	}
+
+	return []remote.Option{
+		remote.WithContext(ctx),
+		remote.WithTransport(http.DefaultTransport),
+		remote.WithAuth(auth),
 		// Retry on rate limits and transient server errors
 		remote.WithRetryStatusCodes(
 			http.StatusTooManyRequests,     // 429 - Rate limit
@@ -349,22 +474,4 @@ func (client *Client) remoteOptions() []remote.Option {
 			Steps:    5,
 		}),
 	}
-
-	if client.username != "" && client.password != "" {
-		auth := &authn.Basic{
-			Username: client.username,
-			Password: client.password,
-		}
-		opts = append(opts, remote.WithAuth(auth))
-	}
-
-	return opts
-}
-
-// remoteOptionsWithContext returns remote options with context, authentication, and retry configuration.
-func (client *Client) remoteOptionsWithContext(ctx context.Context) []remote.Option {
-	opts := client.remoteOptions()
-	opts = append(opts, remote.WithContext(ctx))
-
-	return opts
 }

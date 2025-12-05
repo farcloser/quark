@@ -1,173 +1,225 @@
 package sdk
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
-	"github.com/opencontainers/go-digest"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-
+	"github.com/farcloser/quark/dev/resource"
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/sdk/audit"
+	"github.com/farcloser/quark/sdk/platform"
+	"github.com/farcloser/quark/sdk/scan"
+	"github.com/farcloser/quark/sdk/sign"
+	"github.com/farcloser/quark/sdk/sync"
+	"github.com/farcloser/quark/sdk/update"
+	"github.com/farcloser/quark/sdk/verify"
 )
+
+// Image represents a container image reference.
+type Image struct {
+	resource.BaseResource[Image]
+	opts     ImageOpts
+	ref      *reference.ImageReference
+	log      *slog.Logger
+	registry *Registry
+}
 
 // ImageOpts contains configuration options for creating an image reference.
 type ImageOpts struct {
 	Name    string `json:"name"`              // Required - image name (e.g., "alpine", "org/image", "ghcr.io/foo/bar")
-	Domain  string `json:"domain,omitempty"`  // Optional - registry domain (default: docker.io)
 	Version string `json:"version,omitempty"` // Optional - image tag/version
 	Digest  string `json:"digest,omitempty"`  // Optional - image digest for verification
-
-	// InsecureNoSignature bypasses signature verification (dangerous).
-	// Use only for legacy unsigned images that cannot be signed.
-	InsecureNoSignature bool `json:"insecureNoSignature,omitempty"`
-
-	// SignedBy specifies trusted signers for this specific image.
-	// If set, signature must match one of these identities (global signers ignored).
-	// If empty, global plan signers are used.
-	SignedBy []SignerIdentity `json:"signedBy,omitempty"`
 }
 
-// Image represents a container image reference with optional version and digest.
-type Image struct {
-	ref *reference.ImageReference
-	log zerolog.Logger
-
-	// Signature verification settings
-	insecureNoSignature bool
-	signedBy            []SignerIdentity
-}
-
-// NewImage creates a new Image from the provided arguments.
-func NewImage(args *ImageOpts) (*Image, error) {
-	name := strings.TrimSpace(args.Name)
+// Execute initializes the image reference by parsing the opts.
+// This is called automatically during plan execution.
+func (img *Image) Execute(_ context.Context) error {
+	name := strings.TrimSpace(img.opts.Name)
 	if name == "" {
-		return nil, ErrImageNameRequired
+		return ErrImageNameRequired
 	}
 
-	// Construct reference string from args
 	refString := ""
-	if args.Domain != "" {
-		refString = args.Domain + "/"
+	if img.registry.opts.Domain != "" {
+		refString = img.registry.opts.Domain + "/"
 	}
 
 	refString += name
 
-	if args.Version != "" {
-		refString += ":" + args.Version
+	if img.opts.Version != "" {
+		refString += ":" + img.opts.Version
 	}
 
-	if args.Digest != "" {
-		refString += "@" + args.Digest
+	if img.opts.Digest != "" {
+		refString += "@" + img.opts.Digest
 	}
 
-	// Parse using reference package
-	ref, err := reference.Parse(refString)
+	var err error
+
+	img.ref, err = reference.Parse(refString)
 	if err != nil {
-		if args.Digest != "" {
-			return nil, fmt.Errorf("%w: %w", ErrInvalidImageDigest, err)
-		}
-
-		return nil, fmt.Errorf("invalid image reference: %w", err)
+		return ErrInvalidImageReference
 	}
-
-	return &Image{
-		ref:                 ref,
-		log:                 log.Logger.With().Str("image", name).Logger(),
-		insecureNoSignature: args.InsecureNoSignature,
-		signedBy:            args.SignedBy,
-	}, nil
-}
-
-// Name returns the image name in familiar form (user-facing).
-// Returns shortened form for Docker Hub official images: "alpine" instead of "library/alpine".
-// For the canonical repository path, use Path().
-func (img *Image) Name() string {
-	return img.ref.FamiliarName()
-}
-
-// Path returns the canonical repository path (e.g., "library/alpine", "timberio/vector").
-// This is the full path as stored in the registry, which may differ from Name() for official images.
-func (img *Image) Path() string {
-	return img.ref.Path
-}
-
-// Domain returns the image registry domain (normalized).
-// Empty domain is normalized to "docker.io".
-func (img *Image) Domain() string {
-	return img.ref.Domain
-}
-
-// Version returns the image version/tag if explicitly set.
-// Returns empty string if no version was provided.
-func (img *Image) Version() string {
-	return img.ref.ExplicitTag
-}
-
-// Digest returns the image digest if set.
-func (img *Image) Digest() string {
-	if img.ref.Digest == "" {
-		return ""
-	}
-
-	return img.ref.Digest.String()
-}
-
-// SetVersion sets the image version/tag.
-func (img *Image) SetVersion(version string) {
-	img.ref.Tag = version
-	img.ref.ExplicitTag = version
-}
-
-// SetDigest sets the image digest.
-func (img *Image) SetDigest(digestStr string) error {
-	parsed, err := digest.Parse(digestStr)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidImageDigest, err)
-	}
-
-	img.ref.Digest = parsed
 
 	return nil
 }
 
-// String returns the full serialized image reference.
-// Format depends on what components are set:
-//   - With digest: "domain/path:version@digest" or "domain/path@digest"
-//   - Without digest: "domain/path:version" or "domain/path"
-//
-// Examples:
-//   - "ghcr.io/farcloser/dns:v2025@sha256:379991..."
-//   - "docker.io/library/alpine:3.19"
-//   - "ghcr.io/org/image"
-func (img *Image) String() string {
-	result := img.ref.Name()
+// Digest returns the image digest, if available.
+// The digest may be set from the original opts, or populated after actions like Sync, Verify, or Build.
+// Must be called after plan execution.
+func (img *Image) Digest() string {
+	return img.ref.Digest.String()
+}
 
-	// Add tag if present
-	if img.ref.Tag != "" {
-		result += ":" + img.ref.Tag
-	}
+// Domain returns the registry domain for this image.
+// Must be called after plan execution.
+func (img *Image) Domain() string {
+	return img.registry.opts.Domain
+}
 
-	// Add digest if present
-	if img.ref.Digest != "" {
-		result += "@" + img.ref.Digest.String()
+// Name returns the image name (path without domain, e.g., "library/alpine").
+// Must be called after plan execution.
+func (img *Image) Name() string {
+	return img.ref.Path
+}
+
+// Version returns the image tag/version.
+// Must be called after plan execution.
+func (img *Image) Version() string {
+	return img.ref.Tag
+}
+
+// clone creates a copy of the image with a fresh BaseResource.
+// Used by action methods to return a new image representing post-action state.
+func (img *Image) clone() *Image {
+	result := &Image{
+		opts:     img.opts,
+		ref:      img.ref,
+		log:      img.log,
+		registry: img.registry,
 	}
+	result.BaseResource = resource.NewBaseResource(result, img.ResourceName())
 
 	return result
 }
 
-// tagRef returns the tag reference format: "domain/name:version".
-// Returns error if no tag is set.
-func (img *Image) tagRef() string {
-	return img.ref.Name() + ":" + img.ref.Tag
+// Scan schedules a vulnerability scan on the image.
+// Returns a new Image representing the post-scan state for chaining.
+func (img *Image) Scan(sa *scan.Options) *Image {
+	action := &scanAction{
+		image: img,
+		opts:  sa,
+		log:   img.log.With("component", "scanner"),
+	}
+	action.BaseResource = resource.NewBaseResource(action, "scan:"+img.ResourceName())
+	action.DependsOn(img)
+
+	result := img.clone()
+	result.DependsOn(action)
+
+	return result
 }
 
-// digestRef returns the digest reference format: "domain/name@digest".
-// Returns error if digest is not set.
-func (img *Image) digestRef() (string, error) {
-	if img.ref.Digest == "" {
-		return "", fmt.Errorf("%w for image %q", ErrImageDigestRequired, img.ref.Path)
+// Audit schedules an audit on the image.
+// Returns a new Image representing the post-audit state for chaining.
+func (img *Image) Audit(sa *audit.Options) *Image {
+	action := &auditAction{
+		image: img,
+		opts:  sa,
+		log:   img.log.With("component", "auditor"),
+	}
+	action.BaseResource = resource.NewBaseResource(action, "audit:"+img.ResourceName())
+	action.DependsOn(img)
+
+	result := img.clone()
+	result.DependsOn(action)
+
+	return result
+}
+
+// Verify schedules verification of the image signature.
+// Returns a new Image representing the post-verify state for chaining.
+func (img *Image) Verify(vo *verify.Options) *Image {
+	action := &verifyAction{
+		image: img,
+		opts:  vo,
+		log:   img.log.With("component", "verifier"), //revive:disable-line:add-constant
+	}
+	action.BaseResource = resource.NewBaseResource(action, "verify:"+img.ResourceName())
+	action.DependsOn(img)
+
+	result := img.clone()
+	result.DependsOn(action)
+
+	return result
+}
+
+// Sign schedules signing of the image.
+// Returns a new Image representing the post-sign state for chaining.
+func (img *Image) Sign(signer *Signer, so *sign.Options) *Image {
+	action := &signAction{
+		image:  img,
+		signer: signer,
+		opts:   so,
+		log:    img.log.With("component", "signer"),
+	}
+	action.BaseResource = resource.NewBaseResource(action, "sign:"+img.ResourceName())
+	action.DependsOn(img)
+	action.DependsOn(signer)
+
+	result := img.clone()
+	result.DependsOn(action)
+
+	return result
+}
+
+// SyncTo schedules syncing this image to a destination image.
+// Returns the destination Image representing the post-sync state for chaining.
+func (img *Image) SyncTo(dest *Image, syncOptions *sync.Options) *Image {
+	if syncOptions == nil {
+		syncOptions = &sync.Options{}
 	}
 
-	return img.ref.Name() + "@" + img.ref.Digest.String(), nil
+	if syncOptions.Platforms == nil {
+		syncOptions.Platforms = []platform.Platform{platform.ARM64, platform.AMD64}
+	}
+
+	action := &syncAction{
+		source: img,
+		dest:   dest,
+		opts:   syncOptions,
+		log:    img.log.With("component", "sync-to"),
+	}
+	action.BaseResource = resource.NewBaseResource(
+		action,
+		fmt.Sprintf("sync:%s->%s", img.ResourceName(), dest.ResourceName()),
+	)
+	action.DependsOn(img)
+	action.DependsOn(dest)
+
+	result := dest.clone()
+	result.DependsOn(action)
+
+	return result
+}
+
+// Update schedules checking for and applying version updates to the image.
+// If the image has no tag, warns and returns without error.
+// If a newer version is found, updates the image tag and nullifies the digest.
+// Returns a new Image representing the post-update state for chaining.
+func (img *Image) Update(uo *update.Options) *Image {
+	action := &updateAction{
+		image: img,
+		opts:  uo,
+		log:   img.log.With("component", "updater"),
+	}
+	action.BaseResource = resource.NewBaseResource(action, "update:"+img.ResourceName())
+	action.DependsOn(img)
+
+	result := img.clone()
+	result.DependsOn(action)
+
+	return result
 }

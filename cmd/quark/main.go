@@ -11,16 +11,25 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/term"
 
-	"github.com/farcloser/quark/sdk/logger"
+	"github.com/farcloser/quark/dev/filesystem"
+	"github.com/farcloser/quark/kit/logger"
+	"github.com/farcloser/quark/kit/network"
+	"github.com/farcloser/quark/kit/trust"
 )
 
-var errPlanFileNotFound = errors.New("plan file not found")
+var (
+	errPlanFileNotFound = errors.New("plan file not found")
+	errFileExists       = errors.New("file already exists")
+)
 
 func main() {
 	ctx := context.Background()
-	// Configure zerolog with LOG_LEVEL env var support
-	logger.ConfigureWithDefaults(ctx)
+	// SetDefaults zerolog with LOG_LEVEL env var support
+	logger.SetDefaults(ctx)
+	// SetDefaults http transport before doing anything else
+	network.SetDefaults()
 
 	cmd := &cli.Command{
 		Name:    "quark",
@@ -44,6 +53,19 @@ func main() {
 					},
 				},
 				Action: executeCommand,
+			},
+			{
+				Name:  "generate-key-pair",
+				Usage: "Generate a cosign-compatible signing key pair",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "output",
+						Aliases: []string{"o"},
+						Usage:   "Output file prefix (creates <prefix>.key and <prefix>.pub)",
+						Value:   "cosign",
+					},
+				},
+				Action: generateKeyPairCommand,
 			},
 		},
 	}
@@ -99,4 +121,75 @@ func executeCommand(_ context.Context, cmd *cli.Command) error {
 	}
 
 	return nil
+}
+
+var errPasswordMismatch = errors.New("passwords do not match")
+
+func generateKeyPairCommand(_ context.Context, cmd *cli.Command) error {
+	output := cmd.String("output")
+	privateKeyPath := output + ".key"
+	publicKeyPath := output + ".pub"
+
+	// Check if files already exist.
+	if _, err := os.Stat(privateKeyPath); err == nil {
+		return fmt.Errorf("%w: %s", errFileExists, privateKeyPath)
+	}
+
+	if _, err := os.Stat(publicKeyPath); err == nil {
+		return fmt.Errorf("%w: %s", errFileExists, publicKeyPath)
+	}
+
+	// Prompt for password.
+	password, err := readPassword("Enter password for private key: ")
+	if err != nil {
+		return fmt.Errorf("failed to read password: %w", err)
+	}
+
+	// Confirm password.
+	confirm, err := readPassword("Confirm password: ")
+	if err != nil {
+		return fmt.Errorf("failed to read password confirmation: %w", err)
+	}
+
+	if string(password) != string(confirm) {
+		return errPasswordMismatch
+	}
+
+	// Generate key pair.
+	keyPair, err := trust.GenerateKeyPair(password)
+	if err != nil {
+		return fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	// Write private key.
+	if err := os.WriteFile(privateKeyPath, keyPair.PrivateKey, filesystem.FilePermissionsPrivate); err != nil {
+		return fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	// Write public key.
+	if err := os.WriteFile(publicKeyPath, keyPair.PublicKey, filesystem.FilePermissionsDefault); err != nil {
+		return fmt.Errorf("failed to write public key: %w", err)
+	}
+
+	log.Info().
+		Str("private_key", privateKeyPath).
+		Str("public_key", publicKeyPath).
+		Msg("key pair generated successfully")
+
+	return nil
+}
+
+// readPassword prompts for a password without echoing input.
+func readPassword(prompt string) ([]byte, error) {
+	_, _ = os.Stderr.WriteString(prompt)
+
+	password, err := term.ReadPassword(int(os.Stdin.Fd()))
+
+	_, _ = os.Stderr.WriteString("\n")
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read password: %w", err)
+	}
+
+	return password, nil
 }

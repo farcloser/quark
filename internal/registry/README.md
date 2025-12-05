@@ -6,6 +6,7 @@ Provides OCI-compliant container registry client operations for pulling, pushing
 
 ## Functionality
 
+- **Authentication** - Ping registry to verify credentials
 - **Image retrieval** - Fetch image descriptors and metadata from registries
 - **Image copying** - Transfer images between registries (single-platform and multi-platform)
 - **Manifest list management** - Create and push multi-platform manifest lists
@@ -18,45 +19,48 @@ Provides OCI-compliant container registry client operations for pulling, pushing
 
 ```go
 type Client struct { ... }
-func NewClient(host, username, password string, log zerolog.Logger) *Client
+func NewClient(host, username, password string, log *slog.Logger) *Client
+
+// Authentication
+func (c *Client) Ping(ctx context.Context) error
 
 // Retrieval operations
-func (c *Client) GetImage(imageRef string) (remote.Descriptor, error)
-func (c *Client) GetImageHandle(imageRef string) (v1.Image, error)
-func (c *Client) GetDigest(imageRef string) (string, error)
-func (c *Client) GetPlatformDigests(imageRef string) (map[string]string, error)
-func (c *Client) CheckExists(imageRef string) (bool, error)
-func (c *Client) ListTags(repository string) ([]string, error)
+func (c *Client) GetImage(ctx context.Context, imageRef name.Reference) (remote.Descriptor, error)
+func (c *Client) GetImageHandle(ctx context.Context, imageRef name.Reference) (v1.Image, error)
+func (c *Client) GetDigest(ctx context.Context, imageRef name.Reference) (string, error)
+func (c *Client) GetPlatformDigests(ctx context.Context, imageRef name.Reference) (map[string]string, error)
+func (c *Client) CheckExists(ctx context.Context, imageRef name.Reference) (bool, error)
+func (c *Client) ListTags(ctx context.Context, repository string) ([]string, error)
 
 // Copy operations
-func (c *Client) CopyImage(srcRef, dstRef string, dstClient *Client) (v1.Image, error)
-func (c *Client) CopyIndex(srcRef, dstRef string, dstClient *Client) error
+func (c *Client) CopyImage(ctx context.Context, srcRef, dstRef name.Reference, dstClient *Client) (v1.Image, error)
+func (c *Client) CopyIndex(ctx context.Context, srcRef, dstRef name.Reference, dstClient *Client) error
 
 // Fetch operations
-func (c *Client) FetchPlatformImage(srcRef, platformDigest string) (v1.Image, error)
+func (c *Client) FetchPlatformImage(ctx context.Context, srcRepo name.Repository, platformDigest string) (v1.Image, error)
 
 // Manifest list operations
-func (c *Client) PushManifestList(manifestRef string, platformImages map[string]v1.Image) (string, error)
+func (c *Client) PushManifestList(ctx context.Context, manifestRef name.Reference, platformImages map[string]v1.Image) (string, error)
 
-// Exported error types
+// Errors
 var (
-    ErrParseImageReference error
-    ErrParseSourceReference error
-    ErrParseDestinationReference error
+    ErrAuthFailed             error
+    ErrParseSourceReference   error
     ErrParseManifestReference error
-    ErrGetImage error
-    ErrGetImageIndex error
+    ErrGetImage               error
+    ErrGetImageIndex          error
 )
 ```
 
 ## Design
 
-- **OCI standard compliance**: Built on top of `google/go-containerregistry` library
+- **OCI standard compliance**: Built on `google/go-containerregistry` library
+- **Context propagation**: All operations accept context for cancellation/timeout
 - **Authentication support**: HTTP Basic Auth for private registries
-- **Transport error handling**: Distinguishes between 404 (not found) vs other errors (network, auth)
+- **Transport error handling**: Distinguishes 404 (not found) vs other errors (network, auth)
 - **Deterministic manifest lists**: Sorts platforms alphabetically for reproducible digests
-- **Wrapped errors**: All errors use typed sentinel errors for programmatic error checking
-- **Retry logic**: Automatic retry on rate limits (429) and server errors (500-504) with exponential backoff (1s, 2s, 4s, 8s, 16s)
+- **Wrapped errors**: Typed sentinel errors for programmatic error checking
+- **Retry logic**: Automatic retry on rate limits and server errors with exponential backoff
 
 ## Retry Behavior
 
@@ -76,7 +80,7 @@ Backoff strategy: 1s, 2s, 4s, 8s, 16s (up to 5 attempts total)
 
 ## Security Considerations
 
-- **Credential handling**: Credentials passed via HTTP Basic Auth (handled by go-containerregistry)
+- **Credential handling**: Credentials passed via HTTP Basic Auth
 - **Digest support**: Supports both tag-based and digest-based image references
-- **404 vs auth errors**: `CheckExists` properly distinguishes 404 (not found) from authentication failures
-- **Transport security**: All registry operations use HTTPS by default
+- **404 vs auth errors**: `CheckExists` properly distinguishes 404 from authentication failures
+- **Trusted source images**: Copy operations return source image for digest computation (not fetched from destination)

@@ -6,39 +6,48 @@ Provides remote BuildKit operations over SSH for building multi-platform contain
 
 ## Functionality
 
-- **Remote builds** - Execute Docker/BuildKit builds on remote nodes via SSH
+- **Remote builds** - Execute Docker/BuildKit builds on remote nodes via SSH tunnel
 - **Multi-platform support** - Build images for different architectures (amd64, arm64)
-- **Context upload** - Transfer build context from local machine to remote builder
+- **Socket forwarding** - Creates local Unix socket that forwards to remote Docker daemon
 - **Digest extraction** - Retrieve image digests after successful builds
 
 ## Public API
 
 ```go
 type Client struct { ... }
-func NewClient(sshConn ssh.Connection, log zerolog.Logger) *Client
+func NewClient(sshConn ssh.Connection, nodeID string, log *slog.Logger) (*Client, error)
 
 // Build operations
-func (c *Client) Build(ctx context.Context, contextPath, dockerfilePath, platform string) (string, error)
-func (c *Client) BuildMultiPlatform(ctx context.Context, contextPath, dockerfilePath string, platforms []string, tag string) (string, error)
-func (c *Client) UploadContext(ctx context.Context, localPath, remotePath string) error
-func (c *Client) GetDigest(tag string) (string, error)
+func (c *Client) BuildMultiPlatform(ctx context.Context, contextPath, dockerfilePath string, platforms, tags []string, buildArgs map[string]string) (string, error)
+
+// Connection management
+func (c *Client) DockerHost() string  // Returns unix:// path for DOCKER_HOST
+func (c *Client) Close() error        // Closes SSH tunnel and cleans up
 ```
 
 ## Design
 
-- **SSH-based communication**: Leverages hadron's SSH connection pooling for remote command execution
-- **Docker buildx**: Uses `docker buildx build` commands for actual build operations
-- **Remote execution**: All build operations happen on remote nodes, not locally
-- **Platform-specific builds**: Each platform (amd64, arm64) built on dedicated hardware nodes
+- **SSH-based communication**: Uses SSH connection for remote Docker socket forwarding
+- **Local socket proxy**: Creates a local Unix socket that tunnels to remote Docker daemon
+- **Docker buildx**: Uses `docker buildx build` with `--push` for multi-platform builds
+- **Stable socket paths**: Socket paths based on hashed node ID for predictable locations
+- **Color customization**: Sets BUILDKIT_COLORS environment for consistent output
+
+## Multi-Platform Build Flow
+
+1. Ensure quark-builder (docker-container driver) exists
+2. Forward local socket to remote Docker daemon via SSH
+3. Execute `docker buildx build` with multiple `--platform` flags
+4. Push manifest list directly to registry
+5. Extract and return manifest digest
 
 ## Dependencies
 
-- External: `carapace-sh/carapace-shlex` for shell command escaping
-- Internal: `github.com/farcloser/quark/ssh` for SSH connection management
+- External: Docker with BuildKit support on remote nodes
+- Internal: `dev/ssh` for SSH connection management, `internal2/utils` for runtime directory
 
 ## Notes
 
-- Requires BuildKit/Docker to be installed and configured on remote nodes
-- Single-platform builds use `--load` flag to import built images into local Docker daemon on remote host
-- Multi-platform builds use `--push` flag with multiple `--platform` values, creating a manifest list and pushing directly to registry
+- Requires Docker with buildx plugin installed on remote nodes
 - Multi-platform builds require a docker-container builder (automatically created as "quark-builder")
+- Socket files stored in `RuntimeDir()/buildkit/` with stable hashed names

@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
-
-	"github.com/farcloser/quark/sdk/filesystem"
-	"github.com/farcloser/quark/ssh"
+	"github.com/farcloser/quark/dev/filesystem"
+	"github.com/farcloser/quark/dev/ssh"
 )
 
 const (
@@ -179,7 +178,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	}
 
 	// Wait for SSH to be ready with retries
-	pool := ssh.NewPool(zerolog.Nop())
+	pool := ssh.NewPool(slog.New(slog.DiscardHandler))
 	endpoint := "root@" + containerIP
 
 	var client ssh.Connection

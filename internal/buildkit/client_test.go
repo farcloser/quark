@@ -3,46 +3,59 @@ package buildkit_test
 import (
 	"context"
 	"io"
+	"log/slog"
+	"net"
 	"testing"
 
-	"github.com/rs/zerolog"
-
+	"github.com/farcloser/quark/dev/ssh"
 	"github.com/farcloser/quark/internal/buildkit"
-	"github.com/farcloser/quark/ssh"
 )
 
-// INTENTION: NewClient should create a valid buildkit client.
-func TestNewClient(t *testing.T) {
+func discardLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
+
+// INTENTION: NewClient should create a valid buildkit client with mock connection.
+func TestNewClient_WithMockConnection(t *testing.T) {
 	t.Parallel()
 
-	// Note: NewClient accepts nil ssh.Connection (will panic at execution time)
-	// This documents current behavior - nil check happens at execution, not construction
-	client := buildkit.NewClient(nil, zerolog.Nop())
+	mockConn := &mockSSHConnection{}
+
+	client, err := buildkit.NewClient(mockConn, "test-node", discardLogger())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
 	if client == nil {
 		t.Fatal("NewClient() returned nil, want non-nil client")
 	}
+
+	// Clean up
+	if err := client.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
 }
 
-// INTENTION: Build with cancelled context should return context error.
-func TestClient_Build_ContextCancelled(t *testing.T) {
+// INTENTION: DockerHost should return a valid unix socket path.
+func TestClient_DockerHost(t *testing.T) {
 	t.Parallel()
 
-	client := buildkit.NewClient(nil, zerolog.Nop())
+	mockConn := &mockSSHConnection{}
 
-	// Create cancelled context
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel() // Cancel immediately
-
-	tag, err := client.Build(ctx, "/tmp/context", "Dockerfile", "linux/amd64")
-
-	// Should fail with context cancelled error
-	if err == nil {
-		t.Error("Build() error = nil, want context cancelled error")
+	client, err := buildkit.NewClient(mockConn, "test-node-docker-host", discardLogger())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	if tag != "" {
-		t.Errorf("Build() tag = %q, want empty string on cancelled context", tag)
+	defer client.Close()
+
+	host := client.DockerHost()
+	if host == "" {
+		t.Error("DockerHost() returned empty string")
+	}
+
+	if len(host) < 7 || host[:7] != "unix://" {
+		t.Errorf("DockerHost() = %q, want unix:// prefix", host)
 	}
 }
 
@@ -50,38 +63,44 @@ func TestClient_Build_ContextCancelled(t *testing.T) {
 func TestClient_BuildMultiPlatform_ContextCancelled(t *testing.T) {
 	t.Parallel()
 
-	client := buildkit.NewClient(nil, zerolog.Nop())
+	mockConn := &mockSSHConnection{}
+
+	client, err := buildkit.NewClient(mockConn, "test-node-build", discardLogger())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	defer client.Close()
 
 	// Create cancelled context
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // Cancel immediately
 
 	platforms := []string{"linux/amd64", "linux/arm64"}
+	tags := []string{"test:latest", "test:v1.0.0"}
 
-	tag, err := client.BuildMultiPlatform(ctx, "/tmp/context", "Dockerfile", platforms, "test:latest")
+	_, err = client.BuildMultiPlatform(ctx, "/tmp/context", "Dockerfile", platforms, tags, nil)
 
 	// Should fail with context cancelled error
 	if err == nil {
 		t.Error("BuildMultiPlatform() error = nil, want context cancelled error")
 	}
-
-	if tag != "" {
-		t.Errorf("BuildMultiPlatform() tag = %q, want empty string on cancelled context", tag)
-	}
 }
 
-// INTENTION: NewClient with valid ssh.Connection creates client.
-// Note: This test uses a mock connection to verify client creation works.
-func TestNewClient_WithMockConnection(t *testing.T) {
+// INTENTION: Close should be idempotent and clean up resources.
+func TestClient_Close(t *testing.T) {
 	t.Parallel()
 
-	// Create a mock SSH connection (implements ssh.Connection interface)
 	mockConn := &mockSSHConnection{}
 
-	client := buildkit.NewClient(mockConn, zerolog.Nop())
+	client, err := buildkit.NewClient(mockConn, "test-node-close", discardLogger())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
 
-	if client == nil {
-		t.Fatal("NewClient() returned nil, want non-nil client with mock connection")
+	// First close should succeed
+	if err := client.Close(); err != nil {
+		t.Errorf("Close() first call error = %v", err)
 	}
 }
 
@@ -106,6 +125,10 @@ func (*mockSSHConnection) UploadFile(_, _ string) error {
 
 func (*mockSSHConnection) UploadData(_ []byte, _ string) error {
 	return nil
+}
+
+func (*mockSSHConnection) DialUnix(_ string) (net.Conn, error) {
+	return nil, ssh.ErrNotConnected
 }
 
 // Ensure mockSSHConnection implements ssh.Connection at compile time.

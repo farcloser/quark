@@ -1,304 +1,468 @@
-// Package buildkit provides buildkit client operations via SSH.
 package buildkit
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
-	"github.com/carapace-sh/carapace-shlex"
-	"github.com/rs/zerolog"
+	"go.farcloser.world/core/filesystem"
 
-	"github.com/farcloser/quark/ssh"
+	"github.com/farcloser/quark/dev/ssh"
+	"github.com/farcloser/quark/internal/utils"
 )
 
 const (
 	// builderName is the name of the buildx builder instance used for multi-platform builds.
 	builderName = "quark-builder"
+
+	// remoteDockerSocket is the path to the Docker socket on the remote host.
+	remoteDockerSocket = "/var/run/docker.sock"
+
+	// dockerCmd is the docker command name.
+	dockerCmd = "docker"
+
+	// buildxSubCmd is the buildx subcommand.
+	buildxSubCmd = "buildx"
+
+	// socketDirPerms is the permission mode for the socket directory.
+	socketDirPerms = 0o700
+
+	// socketDialTimeout is how long to wait when checking if a socket is alive.
+	socketDialTimeout = 100 * time.Millisecond
 )
 
-// Client wraps buildkit operations over SSH.
+// Client wraps Docker buildx operations via SSH-tunneled socket.
 type Client struct {
-	sshConn ssh.Connection
-	log     zerolog.Logger
+	sshConn    ssh.Connection
+	log        *slog.Logger
+	socketPath string
+	ownsSocket bool         // true if this client created the socket and is responsible for cleanup
+	listener   net.Listener // nil if ownsSocket is false
+	wg         sync.WaitGroup
+	closed     chan struct{}
 }
 
-// NewClient creates a new buildkit client using SSH.
-func NewClient(sshConn ssh.Connection, log zerolog.Logger) *Client {
-	return &Client{
-		sshConn: sshConn,
-		log:     log,
-	}
-}
+// NewClient creates a new buildkit client using SSH socket tunneling.
+// The client creates a local Unix socket that forwards to the remote Docker daemon.
+// The nodeID is used to create a stable socket path based on the node's identity.
+// If another client already owns the socket for this node, the returned client
+// will reuse the existing socket without creating a new listener.
+func NewClient(sshConn ssh.Connection, nodeID string, log *slog.Logger) (*Client, error) {
+	// Create socket path under runtime directory using hash of node ID
+	hash := sha256.Sum256([]byte(nodeID))
+	hashStr := hex.EncodeToString(hash[:8]) // Use first 8 bytes (16 hex chars)
 
-// Build executes a build on the remote buildkit node.
-// Returns the image tag that was built (digest retrieval requires registry operations).
-func (bkclient *Client) Build(
-	ctx context.Context,
-	contextPath string,
-	dockerfilePath string,
-	platform string,
-) (string, error) {
-	// Check context for cancellation
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("build cancelled: %w", err)
+	socketDir := filepath.Join(utils.RuntimeDir(), "quark", hashStr)
+	if err := os.MkdirAll(socketDir, socketDirPerms); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCreateSocketDir, err)
 	}
 
-	bkclient.log.Info().
-		Str("context", contextPath).
-		Str("dockerfile", dockerfilePath).
-		Str("platform", platform).
-		Msg("starting buildkit build")
+	socketPath := filepath.Join(socketDir, "docker.sock")
 
-	// Connect to buildkit daemon via SSH
-	// Note: buildkit client library doesn't support SSH directly,
-	// so we need to tunnel through SSH or use buildkit's SSH support
-
-	// For now, we'll use docker buildx over SSH as a simpler approach
-	// This requires buildkit to be running on the remote host
-
-	buildCmd := fmt.Sprintf(
-		"docker buildx build --platform %s --load -f %s %s",
-		shlex.Join([]string{platform}),
-		shlex.Join([]string{dockerfilePath}),
-		shlex.Join([]string{contextPath}),
-	)
-
-	stdout, stderr, err := bkclient.sshConn.Execute(buildCmd)
+	// Acquire or create socket under lock (lock the directory itself)
+	listener, ownsSocket, err := acquireSocket(socketPath, socketDir)
 	if err != nil {
-		bkclient.log.Error().
-			Str("stdout", stdout).
-			Str("stderr", stderr).
-			Err(err).
-			Msg("build failed")
-
-		return "", fmt.Errorf("build failed: %w", err)
+		return nil, err
 	}
 
-	bkclient.log.Info().Msg("build complete")
+	client := &Client{
+		sshConn:    sshConn,
+		log:        log,
+		socketPath: socketPath,
+		ownsSocket: ownsSocket,
+		listener:   listener,
+		closed:     make(chan struct{}),
+	}
 
-	return stdout, nil
+	// Only start accept loop if we own the socket
+	if ownsSocket {
+		client.wg.Add(1)
+
+		go client.acceptLoop()
+
+		log.Debug("docker socket tunnel started", "socket", socketPath)
+	} else {
+		log.Debug("reusing existing docker socket tunnel", "socket", socketPath)
+	}
+
+	return client, nil
 }
 
-// ensureBuilder ensures a docker-container builder exists for multi-platform builds.
-func (bkclient *Client) ensureBuilder() error {
-	// Create builder if it doesn't exist (idempotent - succeeds if already exists)
-	createCmd := fmt.Sprintf(
-		"docker buildx create --name %s --driver docker-container --bootstrap --use 2>/dev/null || true",
-		shlex.Join([]string{builderName}),
-	)
+// acceptLoop accepts connections on the local socket and forwards them to the remote Docker socket.
+func (c *Client) acceptLoop() {
+	defer c.wg.Done()
 
-	_, _, err := bkclient.sshConn.Execute(createCmd)
-	if err != nil {
-		return fmt.Errorf("failed to ensure builder exists: %w", err)
+	for {
+		localConn, err := c.listener.Accept()
+		if err != nil {
+			select {
+			case <-c.closed:
+				return // Normal shutdown
+			default:
+				c.log.Error("failed to accept connection", "error", err)
+
+				continue
+			}
+		}
+
+		c.wg.Add(1)
+
+		go c.handleConnection(localConn)
 	}
+}
+
+// handleConnection forwards data between local and remote connections.
+func (c *Client) handleConnection(localConn net.Conn) {
+	defer c.wg.Done()
+	defer localConn.Close()
+
+	// Connect to remote Docker socket
+	remoteConn, err := c.sshConn.DialUnix(remoteDockerSocket)
+	if err != nil {
+		c.log.Error("failed to connect to remote docker socket", "error", err)
+
+		return
+	}
+
+	defer remoteConn.Close()
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+
+	go func() {
+		_, _ = io.Copy(remoteConn, localConn)
+		done <- struct{}{}
+	}()
+
+	go func() {
+		_, _ = io.Copy(localConn, remoteConn)
+		done <- struct{}{}
+	}()
+
+	// Wait for either direction to finish
+	<-done
+}
+
+// Close shuts down the socket tunnel and cleans up resources.
+// If this client does not own the socket (it's reusing an existing one),
+// Close is a no-op.
+func (c *Client) Close() error {
+	if !c.ownsSocket {
+		return nil
+	}
+
+	close(c.closed)
+
+	if err := c.listener.Close(); err != nil {
+		c.log.Warn("failed to close listener", "error", err) //revive:disable-line:add-constant
+	}
+
+	c.wg.Wait()
+
+	// Clean up socket file and directory
+	socketDir := filepath.Dir(c.socketPath)
+	if err := os.RemoveAll(socketDir); err != nil {
+		c.log.Warn("failed to remove socket directory", "error", err, "path", socketDir)
+	}
+
+	c.log.Debug("docker socket tunnel closed")
 
 	return nil
 }
 
-// BuildMultiPlatform builds for multiple platforms and creates a manifest list.
-// Returns the tag that was built (digest retrieval requires registry operations).
-func (bkclient *Client) BuildMultiPlatform(
+// DockerHost returns the DOCKER_HOST value to use for docker commands.
+func (c *Client) DockerHost() string {
+	return "unix://" + c.socketPath
+}
+
+// buildMetadata represents the metadata output from docker buildx.
+type buildMetadata struct {
+	//nolint:tagliatelle
+	ContainerImageDigest string `json:"containerimage.digest"`
+}
+
+// BuildMultiPlatform builds for multiple platforms and pushes to registry.
+// Returns the manifest digest of the pushed image.
+// Multiple tags can be specified; all will be pushed in a single operation.
+func (c *Client) BuildMultiPlatform(
 	ctx context.Context,
 	contextPath string,
 	dockerfilePath string,
 	platforms []string,
-	tag string,
+	tags []string,
+	buildArgs map[string]string,
 ) (string, error) {
-	// Check context for cancellation
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("build cancelled: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrBuildCancelled, err)
 	}
 
-	bkclient.log.Info().
-		Strs("platforms", platforms).
-		Str("tag", tag).
-		Msg("starting multi-platform build")
+	c.log.InfoContext(ctx, "starting multi-platform build",
+		"platforms", platforms,
+		"tags", tags,
+		"build_args", len(buildArgs))
 
-	// Ensure builder exists
-	if err := bkclient.ensureBuilder(); err != nil {
+	// Ensure builder exists (uses locking to handle concurrent builds)
+	if err := c.EnsureBuilder(ctx); err != nil {
 		return "", err
 	}
 
-	// Build command with multiple platforms
-	platformsStr := ""
-
-	for idx, platform := range platforms {
-		if idx > 0 {
-			platformsStr += ","
-		}
-
-		platformsStr += platform
-	}
-
-	buildCmd := fmt.Sprintf(
-		"docker buildx build --builder %s --platform %s --push -t %s -f %s %s",
-		shlex.Join([]string{builderName}),
-		shlex.Join([]string{platformsStr}),
-		shlex.Join([]string{tag}),
-		shlex.Join([]string{dockerfilePath}),
-		shlex.Join([]string{contextPath}),
-	)
-
-	// Stream build output to logger
-	stdoutWriter := &logWriter{log: bkclient.log.With().Str("stream", "stdout").Logger()}
-	stderrWriter := &logWriter{log: bkclient.log.With().Str("stream", "stderr").Logger()}
-
-	err := bkclient.sshConn.ExecuteStreaming(buildCmd, stdoutWriter, stderrWriter)
+	// Create metadata file in node's runtime directory with random suffix to avoid collisions
+	metadataFile, err := c.createMetadataFile()
 	if err != nil {
-		bkclient.log.Error().
-			Err(err).
-			Msg("multi-platform build failed")
+		return "", fmt.Errorf("%w: %w", ErrCreateMetadataFile, err)
+	}
+	defer os.Remove(metadataFile)
 
-		return "", fmt.Errorf("multi-platform build failed: %w", err)
+	// Build platforms string
+	platformsStr := strings.Join(platforms, ",")
+
+	// Build command arguments
+	args := []string{
+		buildxSubCmd, "build",
+		"--builder", builderName,
+		"--platform", platformsStr,
+		"--progress", "plain",
+		"--push",
+		"--metadata-file", metadataFile,
+		"-f", dockerfilePath,
 	}
 
-	bkclient.log.Info().
-		Str("tag", tag).
-		Msg("multi-platform build complete")
+	// Add all tags
+	for _, tag := range tags {
+		args = append(args, "-t", tag)
+	}
 
-	return tag, nil
+	// Add build args
+	for key, value := range buildArgs {
+		args = append(args, "--build-arg", key+"="+value)
+	}
+
+	// Add context path
+	args = append(args, contextPath)
+
+	// Execute build
+	if err := c.runDocker(ctx, args...); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrBuildFailed, err)
+	}
+
+	// Read metadata to get digest
+	digest, err := readBuildDigest(metadataFile)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrReadBuildMetadata, err)
+	}
+
+	c.log.InfoContext(ctx, "multi-platform build complete", "tags", tags, "digest", digest)
+
+	return digest, nil
 }
 
-// RegistryLogin logs into a Docker registry on the remote host.
-func (bkclient *Client) RegistryLogin(registry, username, password string) error {
-	cmd := fmt.Sprintf("echo '%s' | docker login -u '%s' --password-stdin '%s'", password, username, registry)
+// createMetadataFile creates a unique file path for build metadata in the node's runtime directory.
+func (c *Client) createMetadataFile() (string, error) {
+	// Use the node's socket directory for metadata files
+	socketDir := filepath.Dir(c.socketPath)
 
-	bkclient.log.Debug().Str("registry", registry).Msg("logging into registry")
-
-	_, stderr, err := bkclient.sshConn.Execute(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to login to registry %s: %w (stderr: %s)", registry, err, stderr)
+	// Generate random suffix to avoid collisions between concurrent builds
+	var randomBytes [8]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrGenerateRandomBytes, err)
 	}
 
-	bkclient.log.Info().Str("registry", registry).Msg("registry login successful")
+	filename := fmt.Sprintf("build-%s.json", hex.EncodeToString(randomBytes[:]))
+
+	return filepath.Join(socketDir, filename), nil
+}
+
+// readBuildDigest reads the image digest from the buildx metadata file.
+func readBuildDigest(metadataFile string) (string, error) {
+	//nolint:gosec
+	data, err := os.ReadFile(metadataFile)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrMetadataFailedReading, err)
+	}
+
+	var metadata buildMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrMetadataFailedParsing, err)
+	}
+
+	if metadata.ContainerImageDigest == "" {
+		return "", ErrMetadataNoDigest
+	}
+
+	return metadata.ContainerImageDigest, nil
+}
+
+// RegistryLogin logs into a Docker registry.
+func (c *Client) RegistryLogin(ctx context.Context, registry, username, password string) error {
+	c.log.DebugContext(ctx, "logging into registry", "registry", registry) //revive:disable-line:add-constant
+
+	cmd := exec.CommandContext(ctx, dockerCmd, "login", "-u", username, "--password-stdin", registry)
+
+	cmd.Env = append(os.Environ(), "DOCKER_HOST="+c.DockerHost())
+	cmd.Stdin = strings.NewReader(password)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %w (output: %s)", ErrRegistryLoginFailed, err, string(output))
+	}
+
+	c.log.InfoContext(ctx, "registry login successful", "registry", registry)
 
 	return nil
 }
 
-// UploadContext uploads the build context to the remote host.
-func (bkclient *Client) UploadContext(ctx context.Context, localPath, remotePath string) error {
-	bkclient.log.Debug().
-		Str("local", localPath).
-		Str("remote", remotePath).
-		Msg("uploading build context")
-
-	// Create remote directory
-	mkdirCmd := "mkdir -p " + shlex.Join([]string{remotePath})
-	if _, _, err := bkclient.sshConn.Execute(mkdirCmd); err != nil {
-		return fmt.Errorf("failed to create remote directory: %w", err)
+// EnsureBuilder ensures the buildx builder exists.
+// Uses filesystem locking to prevent concurrent creation races.
+// The builder is created once and reused across builds.
+func (c *Client) EnsureBuilder(ctx context.Context) error {
+	lockDir := filepath.Join(utils.RuntimeDir(), "quark", "builder")
+	if err := os.MkdirAll(lockDir, socketDirPerms); err != nil {
+		return fmt.Errorf("%w: %w", ErrCreateBuilderLockDir, err)
 	}
 
-	// Walk local directory and upload files
-	return uploadDirectory(ctx, bkclient.sshConn, localPath, remotePath)
-}
+	var createErr error
 
-func uploadDirectory(ctx context.Context, sshConn ssh.Connection, localDir, remoteDir string) error {
-	entries, err := os.ReadDir(localDir)
+	err := filesystem.WithLock(lockDir, func() error {
+		// Check if builder already exists
+		if err := c.runDockerQuiet(ctx, buildxSubCmd, "inspect", builderName); err == nil {
+			// Builder exists, nothing to do
+			c.log.DebugContext(
+				ctx,
+				"using existing buildx builder",
+				"builder",
+				builderName,
+			) //revive:disable-line:add-constant
+
+			return nil
+		}
+
+		// Builder doesn't exist, create it
+		c.log.DebugContext(ctx, "creating buildx builder", "builder", builderName) //revive:disable-line:add-constant
+
+		createArgs := []string{
+			buildxSubCmd, "create",
+			"--name", builderName,
+			"--driver", "docker-container",
+			"--bootstrap",
+		}
+
+		if err := c.runDocker(ctx, createArgs...); err != nil {
+			createErr = fmt.Errorf("%w: %w", ErrCreateBuilder, err)
+
+			return createErr
+		}
+
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to read local directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		// Check context before each file/directory
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("upload cancelled: %w", err)
+		if createErr != nil {
+			return createErr
 		}
 
-		localPath := fmt.Sprintf("%s/%s", localDir, entry.Name())
-		remotePath := fmt.Sprintf("%s/%s", remoteDir, entry.Name())
-
-		if entry.IsDir() {
-			// Create remote directory before recursing
-			mkdirCmd := "mkdir -p " + shlex.Join([]string{remotePath})
-			if _, _, err := sshConn.Execute(mkdirCmd); err != nil {
-				return fmt.Errorf("failed to create remote directory %s: %w", remotePath, err)
-			}
-
-			// Recursively upload directory contents
-			if err := uploadDirectory(ctx, sshConn, localPath, remotePath); err != nil {
-				return err
-			}
-		} else {
-			// Upload file
-			if err := sshConn.UploadFile(localPath, remotePath); err != nil {
-				return fmt.Errorf("failed to upload file %s: %w", localPath, err)
-			}
-		}
+		return fmt.Errorf("%w: %w", ErrAcquireBuilderLock, err)
 	}
 
 	return nil
 }
 
-// GetDigest retrieves the digest of a built image.
-func (bkclient *Client) GetDigest(tag string) (string, error) {
-	inspectCmd := "docker inspect --format='{{.Id}}' " + shlex.Join([]string{tag})
+// runDocker executes a docker command with output passed through to os.Stdout/os.Stderr.
+func (c *Client) runDocker(ctx context.Context, args ...string) error {
+	cmd := exec.CommandContext(ctx, dockerCmd, args...)
 
-	stdout, _, err := bkclient.sshConn.Execute(inspectCmd)
-	if err != nil {
-		return "", fmt.Errorf("failed to get image digest: %w", err)
+	cmd.Env = append(os.Environ(), "DOCKER_HOST="+c.DockerHost())
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %w", ErrDockerCommandFailed, err)
 	}
 
-	return stdout, nil
+	return nil
 }
 
-// logWriter writes to zerolog, splitting output into lines.
-var _ io.Writer = (*logWriter)(nil)
+// runDockerQuiet executes a docker command without streaming output.
+func (c *Client) runDockerQuiet(ctx context.Context, args ...string) error {
+	cmd := exec.CommandContext(ctx, dockerCmd, args...)
 
-const maxLogBufferSize = 64 * 1024 // 64KB max buffer to prevent memory exhaustion
+	cmd.Env = append(os.Environ(), "DOCKER_HOST="+c.DockerHost())
 
-type logWriter struct {
-	log    zerolog.Logger
-	buffer []byte
-}
-
-func (writer *logWriter) Write(bytes []byte) (int, error) {
-	// Append to buffer
-	writer.buffer = append(writer.buffer, bytes...)
-
-	// Force-flush if buffer exceeds max size (prevents unbounded growth)
-	if len(writer.buffer) > maxLogBufferSize {
-		writer.log.Info().Msg(string(writer.buffer))
-		writer.buffer = writer.buffer[:0]
-
-		return len(bytes), nil
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %w", ErrDockerCommandFailed, err)
 	}
 
-	// Process complete lines
-	for {
-		// Find newline
-		idx := -1
+	return nil
+}
 
-		for i, b := range writer.buffer {
-			if b == '\n' {
-				idx = i
+// acquireSocket either creates a new socket listener or determines that an existing
+// socket can be reused. This operation is protected by a file lock to prevent races.
+//
+// Returns:
+//   - listener: the new listener if we created one, nil if reusing existing socket
+//   - ownsSocket: true if we created the socket and are responsible for cleanup
+//   - err: any error that occurred
+func acquireSocket(socketPath, lockPath string) (net.Listener, bool, error) {
+	var listener net.Listener
 
-				break
+	var ownsSocket bool
+
+	err := filesystem.WithLock(lockPath, func() error {
+		// Check if socket file exists
+		if _, statErr := os.Stat(socketPath); os.IsNotExist(statErr) {
+			// Socket does not exist - create it
+			var listenErr error
+
+			listener, listenErr = net.Listen("unix", socketPath)
+			if listenErr != nil {
+				return fmt.Errorf("%w: %w", ErrCreateSocket, listenErr)
 			}
+
+			ownsSocket = true
+
+			return nil
 		}
 
-		// No complete line found
-		if idx == -1 {
-			break
+		// Socket exists - check if it's alive by trying to connect
+		conn, dialErr := net.DialTimeout("unix", socketPath, socketDialTimeout)
+		if dialErr == nil {
+			// Connection succeeded - socket is alive, reuse it
+			_ = conn.Close()
+
+			ownsSocket = false
+
+			return nil
 		}
 
-		// Extract line (without newline)
-		line := string(writer.buffer[:idx])
-		writer.buffer = writer.buffer[idx+1:]
-
-		// Log line if not empty
-		if line != "" {
-			writer.log.Info().Msg(line)
+		// Connection failed - socket is stale, remove and recreate
+		if removeErr := os.Remove(socketPath); removeErr != nil {
+			return fmt.Errorf("%w: %w", ErrRemoveStaleSocket, removeErr)
 		}
+
+		var listenErr error
+
+		listener, listenErr = net.Listen("unix", socketPath)
+		if listenErr != nil {
+			return fmt.Errorf("%w: %w", ErrCreateSocket, listenErr)
+		}
+
+		ownsSocket = true
+
+		return nil
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %w", ErrAcquireSocket, err)
 	}
 
-	return len(bytes), nil
+	return listener, ownsSocket, nil
 }
-
-// Note: This is a simplified implementation using docker buildx over SSH.
-// A full implementation would use the buildkit client library directly with SSH tunneling.
-// The buildkit client library requires more complex setup with session management.
-// This approach is more practical and works with existing buildkit/buildx setups.
-
-// var _ client.Client // Ensure buildkit client is imported for future use

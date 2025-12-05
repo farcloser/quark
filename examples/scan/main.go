@@ -3,50 +3,56 @@ package main
 
 import (
 	"context"
-
-	"github.com/rs/zerolog/log"
+	"log/slog"
+	"os"
 
 	"github.com/farcloser/quark/sdk"
-	"github.com/farcloser/quark/sdk/logger"
+	"github.com/farcloser/quark/sdk/scan"
 )
 
 func main() {
 	ctx := context.Background()
-	logger.ConfigureWithDefaults(ctx)
 
-	plan := sdk.NewPlan("scan-example")
+	plan := sdk.NewPlan()
+
+	// Configure Docker Hub registry (public access)
+	dockerHub := sdk.NewRegistry(sdk.RegistryOpts{
+		Domain: "docker.io",
+	})
 
 	// Define image to scan - using a public image as example
 	// Note: Scan requires a digest for security/reproducibility
 	// Get digest with: docker pull alpine:3.19 && docker inspect alpine:3.19 --format='{{index .RepoDigests 0}}'
-	exampleImage, err := sdk.NewImage(&sdk.ImageOpts{
+	exampleImage := dockerHub.NewImage(sdk.ImageOpts{
 		Name:    "alpine",
-		Domain:  "docker.io",
 		Version: "3.19",
 		Digest:  "sha256:6457d53fb065d6f250e1504b9bc42d5b6c65941d57532c072d929dd0628977d0",
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create image")
-	}
 
 	// Scan image for vulnerabilities
 	// Fail on critical vulnerabilities, warn on high severity
-	if _, err := plan.Scan(&sdk.ScanArgs{
-		Description: "example-scan",
-		Source:      exampleImage,
-		SeverityChecks: []sdk.ScanSeverityCheck{
-			{Threshold: sdk.SeverityCritical, Action: sdk.ActionError},
-			{Threshold: sdk.SeverityHigh, Action: sdk.ActionWarn},
+	scannedImage := exampleImage.Scan(&scan.Options{
+		SeverityChecks: []scan.SeverityCheck{
+			{
+				Severities: []*scan.Severity{scan.SeverityCritical},
+				Action:     scan.ActionError,
+			},
+			{
+				Severities: []*scan.Severity{scan.SeverityHigh},
+				Action:     scan.ActionWarn,
+			},
 		},
-		Format: sdk.FormatTable,
-	}); err != nil {
-		log.Fatal().Err(err).Msg("failed to create scan")
-	}
+		Format: scan.FormatTable,
+	})
+
+	// Add scanned image to plan - dependencies are auto-discovered
+	plan.Add(scannedImage)
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {
-		log.Fatal().Err(err).Msg("scan failed")
+		slog.Error("scan failed", "error", err)
+		os.Exit(1)
 	}
 
-	log.Info().Msg("scan completed successfully")
+	slog.Info("scan completed successfully")
 }

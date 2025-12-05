@@ -42,6 +42,7 @@ linters:
     - misspell
     - gocritic
     - forbidigo
+    - sloglint
 
   disable:
     # These are the linters that we know we do not want
@@ -61,9 +62,9 @@ linters:
     - nestif            # already provided ten different ways with revive cognitive complexity, etc
     - nonamedreturns    # named returns are occasionally useful
     - prealloc          # premature optimization
-    - sloglint          # no slog
     - testifylint       # no testify
     - mnd               # already provided by revive add-constant
+    - wsl               # deprecated
 
   exclusions:
     rules:
@@ -79,6 +80,10 @@ linters:
           - revive
 
   settings:
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
     revive:
       enable-all-rules: true
       rules:
@@ -87,7 +92,8 @@ linters:
         - name: add-constant
           arguments:
             - allowInts: "0,1,2,3,4,-1"
-              allowStrs: '"","%w: %q","%w: %w","%w: %s"," ","-","`","\n",":","@"'
+              allowStrs: '"","%w: %q","%w: %w","%w: %s"," ","-","`","\n",":","@",".","%s:%s"'
+              ignoreFuncs: 'slog[.].*'
         - name: cognitive-complexity
           arguments: [30]
         - name: cyclomatic
@@ -115,44 +121,106 @@ linters:
           allow:
             - $gostd
             # Common
-            - github.com/rs/zerolog
-            - github.com/urfave/cli
+            - go.farcloser.world/core
             - github.com/farcloser/quark
             - github.com/joho/godotenv
-            - github.com/opencontainers/go-digest
+            # Main
+            - github.com/urfave/cli
+            - golang.org/x/term
             # Private
-            - github.com/farcloser/godolint
-            - golang.org/x/crypto/ssh
-            - github.com/kevinburke/ssh_config
-            - github.com/carapace-sh/carapace-shlex
-            - github.com/google/go-containerregistry
-            - github.com/distribution/reference
-            - github.com/pkg/sftp
             - gotest.tools/v3/assert
-            - filippo.io/age
+            # GCR
+            - github.com/google/go-containerregistry
             # Sigstore
             - github.com/sigstore/sigstore-go
+            - github.com/sigstore/sigstore/pkg/cryptoutils
+            - github.com/sigstore/sigstore/pkg/signature
             - github.com/sigstore/protobuf-specs
-        no-ssh-out:
+            - github.com/sigstore/rekor
+            # Godolint
+            - github.com/farcloser/godolint
+            # Distribution
+            - github.com/distribution/reference
+            - github.com/opencontainers/go-digest
+            # SSH
+            - golang.org/x/crypto/ssh
+            - github.com/kevinburke/ssh_config
+            - github.com/pkg/sftp
+            # Crypto
+            - golang.org/x/crypto/nacl/secretbox
+            - golang.org/x/crypto/scrypt
+            # Secrets
+            - filippo.io/age
+            # Logger adapter
+            - github.com/samber/slog-zerolog/v2
+            - github.com/rs/zerolog
+        no-main-leak:
           files:
             - $all
-            - "!**/ssh/**"
+            - "!**/cmd/quark/**"
+          deny:
+            - pkg: github.com/urfave/cli
+            - pkg: golang.org/x/term
+
+        no-go-containerregistry-leak:
+          files:
+            - $all
+            - "!**/internal/registry/**"
+            - "!**/internal/sigstore/**"
+          deny:
+            - pkg: github.com/google/go-containerregistry
+        no-sigstore-leak:
+          files:
+            - $all
+            - "!**/internal/sigstore/**"
+          deny:
+            - pkg: github.com/sigstore/sigstore-go
+            - pkg: github.com/sigstore/sigstore/pkg/cryptoutils
+            - pkg: github.com/sigstore/sigstore/pkg/signature
+            - pkg: github.com/sigstore/protobuf-specs
+            - pkg: github.com/sigstore/rekor
+        no-godolint-leak:
+          files:
+            - $all
+            - "!**/internal/godolint/**"
+          deny:
+            - pkg: github.com/farcloser/godolint
+        no-distribution-leak:
+          files:
+            - $all
+            - "!**/internal/reference/**"
+          deny:
+            - pkg: github.com/distribution/reference
+            - pkg: github.com/opencontainers/go-digest
+        no-ssh-leak:
+          files:
+            - $all
+            - "!**/dev/ssh/**"
           deny:
             - pkg: golang.org/x/crypto/ssh
             - pkg: github.com/kevinburke/ssh_config
             - pkg: github.com/pkg/sftp
-        no-internals-in-sdk:
+        no-crypto-leak:
           files:
             - $all
-            - "!**/internal/**"
-            - "!**/sdk/trust/**"  # trust package configures go-containerregistry's DefaultTransport
+            - "!**/kit/trust/**"
           deny:
-            - pkg: github.com/farcloser/godolint
-            - pkg: github.com/carapace-sh/carapace-shlex
-            - pkg: github.com/google/go-containerregistry
-            - pkg: github.com/distribution/reference
-            - pkg: gotest.tools/v3/assert
+            - pkg: golang.org/x/crypto/nacl/secretbox
+            - pkg: golang.org/x/crypto/scrypt
+        no-age-leak:
+          files:
+            - $all
+            - "!**/kit/secrets/**"
+          deny:
             - pkg: filippo.io/age
+        no-zerolog-leak:
+          files:
+            - $all
+            - "!**/kit/logger/**"
+            - "!**/cmd/quark/**"
+          deny:
+            - pkg: github.com/samber/slog-zerolog/v2
+            - pkg: github.com/rs/zerolog
 
     gomoddirectives:
       # Allow replace for go-containerregistry (HTTPS patch for .local domains)

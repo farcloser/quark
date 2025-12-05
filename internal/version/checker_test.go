@@ -1,122 +1,42 @@
 package version_test
 
 import (
+	"log/slog"
 	"testing"
 
-	"github.com/rs/zerolog"
-
+	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/internal/registry"
 	"github.com/farcloser/quark/internal/version"
 )
 
-// INTENTION: Invalid image references should fail at parse stage before registry access.
-func TestChecker_CheckVersion_InvalidImageReference(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		imageRef       string
-		currentVersion string
-		variant        string
-		wantErrMsg     string
-	}{
-		{
-			name:           "empty image reference",
-			imageRef:       "",
-			currentVersion: "1.0.0",
-			variant:        "",
-			wantErrMsg:     "failed to parse repository",
-		},
-		{
-			name:           "invalid characters in reference",
-			imageRef:       "invalid@@@image",
-			currentVersion: "1.0.0",
-			variant:        "",
-			wantErrMsg:     "failed to parse repository",
-		},
-		{
-			name:           "reference with digest should fail for repository parse",
-			imageRef:       "alpine@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			currentVersion: "1.0.0",
-			variant:        "",
-			wantErrMsg:     "failed to parse repository",
-		},
-		{
-			name:           "malformed registry domain",
-			imageRef:       ":::invalid/repo",
-			currentVersion: "1.0.0",
-			variant:        "",
-			wantErrMsg:     "failed to parse repository",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			checker := version.NewChecker("", "", zerolog.Nop())
-			info, err := checker.CheckVersion(tt.imageRef, tt.currentVersion, tt.variant)
-
-			if err == nil {
-				t.Fatal("CheckVersion() error = nil, want error")
-			}
-
-			if info != nil {
-				t.Errorf("CheckVersion() info = %v, want nil on error", info)
-			}
-
-			// Verify error message contains expected substring
-			if err.Error() == "" || !contains(err.Error(), tt.wantErrMsg) {
-				t.Errorf("CheckVersion() error = %q, want error containing %q", err.Error(), tt.wantErrMsg)
-			}
-		})
-	}
+func discardLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
 }
 
-// INTENTION: Invalid image references should fail at parse stage before registry access.
-// GetDigest no longer handles parsing - invalid references are caught by Image.TagReference()
-// Parsing validation tests moved to sdk/image_test.go
-
-// INTENTION: Checker creation should accept optional credentials.
-func TestNewChecker(t *testing.T) {
+// INTENTION: CheckVersion requires a tagged reference, digest-only references should fail.
+func TestChecker_CheckVersion_RequiresTag(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name     string
-		username string
-		password string
-	}{
-		{
-			name:     "no credentials",
-			username: "",
-			password: "",
-		},
-		{
-			name:     "with credentials",
-			username: "testuser",
-			password: "testpass",
-		},
-		{
-			name:     "username only",
-			username: "testuser",
-			password: "",
-		},
-		{
-			name:     "password only",
-			username: "",
-			password: "testpass",
-		},
+	// Digest-only reference should fail - CheckVersion requires a tag
+	digestRef, err := reference.Parse("alpine@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
+	if err != nil {
+		t.Fatalf("failed to parse digest reference: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	client := registry.NewClient(nil, discardLogger())
+	checker := version.NewChecker(client, discardLogger())
+	info, err := checker.CheckVersion(t.Context(), *digestRef)
 
-			checker := version.NewChecker(tt.username, tt.password, zerolog.Nop())
+	if err == nil {
+		t.Fatal("CheckVersion() error = nil, want error for digest-only reference")
+	}
 
-			if checker == nil {
-				t.Fatal("NewChecker() returned nil, want non-nil checker")
-			}
-		})
+	if info != nil {
+		t.Errorf("CheckVersion() info = %v, want nil on error", info)
+	}
+
+	if !contains(err.Error(), "invalid argument") {
+		t.Errorf("CheckVersion() error = %q, want error containing %q", err.Error(), "invalid argument")
 	}
 }
 

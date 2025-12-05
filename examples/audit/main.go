@@ -3,44 +3,44 @@ package main
 
 import (
 	"context"
-
-	"github.com/rs/zerolog/log"
+	"log/slog"
+	"os"
 
 	"github.com/farcloser/quark/sdk"
-	"github.com/farcloser/quark/sdk/logger"
+	"github.com/farcloser/quark/sdk/audit"
 )
 
 func main() {
 	ctx := context.Background()
-	logger.ConfigureWithDefaults(ctx)
 
-	plan := sdk.NewPlan("audit-example")
+	plan := sdk.NewPlan()
+
+	// Configure Docker Hub registry (public access)
+	dockerHub := sdk.NewRegistry(sdk.RegistryOpts{
+		Domain: "docker.io",
+	})
 
 	// Define image to audit
-	exampleImage, err := sdk.NewImage(&sdk.ImageOpts{
+	exampleImage := dockerHub.NewImage(sdk.ImageOpts{
 		Name:    "alpine",
-		Domain:  "docker.io",
 		Version: "3.19",
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create image")
-	}
 
 	// Audit image against strict ruleset
 	// Note: Dockerfile audit requires local Dockerfile path
-	if _, err := plan.Audit(&sdk.AuditArgs{
-		Description:  "alpine-audit",
-		Source:       exampleImage,
-		RuleSet:      sdk.RuleSetStrict,
-		IgnoreChecks: []string{"CIS-DI-0001"},
-	}); err != nil {
-		log.Fatal().Err(err).Msg("failed to create audit")
-	}
+	auditedImage := exampleImage.Audit(&audit.Options{
+		SeverityChecks: audit.SetSeverityCheckStrict,
+		Ignore:         []string{"CIS-DI-0001"},
+	})
+
+	// Add audited image to plan - dependencies are auto-discovered
+	plan.Add(auditedImage)
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {
-		log.Fatal().Err(err).Msg("audit failed")
+		slog.Error("audit failed", "error", err)
+		os.Exit(1)
 	}
 
-	log.Info().Msg("audit completed successfully")
+	slog.Info("audit completed successfully")
 }
