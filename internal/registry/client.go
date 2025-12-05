@@ -21,19 +21,19 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/farcloser/quark/internal/reference"
-	"github.com/farcloser/quark/internal/shared"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 // Client wraps OCI registry operations.
 type Client struct {
-	creds *shared.RegistryCredentials
+	creds *utilities.RegistryCredentials
 	log   *slog.Logger
 }
 
 // NewClient creates a new registry client.
-func NewClient(creds *shared.RegistryCredentials, log *slog.Logger) *Client {
+func NewClient(creds *utilities.RegistryCredentials, log *slog.Logger) *Client {
 	if creds == nil {
-		creds = &shared.RegistryCredentials{}
+		creds = &utilities.RegistryCredentials{}
 	}
 
 	return &Client{
@@ -47,7 +47,7 @@ func NewClient(creds *shared.RegistryCredentials, log *slog.Logger) *Client {
 func (client *Client) Ping(ctx context.Context) error {
 	reg, err := name.NewRegistry(client.creds.Domain)
 	if err != nil {
-		return fmt.Errorf("%w: invalid registry %q: %w", shared.ErrInvalidArgument, client.creds.Domain, err)
+		return fmt.Errorf("%w: invalid registry %q: %w", utilities.ErrInvalidArgument, client.creds.Domain, err)
 	}
 
 	// Use Catalog to verify authentication - this uses the same remote options
@@ -203,7 +203,7 @@ func (client *Client) SyncMultiPlatform(
 	for platform, digest := range platformDigests {
 		// Check context cancellation before each platform
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("%w: %w", shared.ErrContext, err)
+			return "", fmt.Errorf("%w: %w", utilities.ErrContext, err)
 		}
 
 		// Skip platforms not in the requested list

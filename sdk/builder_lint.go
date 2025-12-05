@@ -132,7 +132,7 @@ func (*buildLintAction) FormatOutput(violations []godolint.Violation, format *li
 	case lint.FormatJSON:
 		bytes, err := json.MarshalIndent(violations, "", "  ")
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("%w: %w", lint.ErrFormatOutput, err)
 		}
 
 		return string(bytes), nil

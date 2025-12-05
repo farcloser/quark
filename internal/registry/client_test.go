@@ -7,7 +7,7 @@ import (
 
 	"github.com/farcloser/quark/internal/reference"
 	"github.com/farcloser/quark/internal/registry"
-	"github.com/farcloser/quark/internal/shared"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 func discardLogger() *slog.Logger {
@@ -18,8 +18,8 @@ func discardLogger() *slog.Logger {
 func TestClient_CopyImage_InvalidSourceReference(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient(&shared.RegistryCredentials{Domain: "docker.io"}, discardLogger())
-	dstClient := registry.NewClient(&shared.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
+	client := registry.NewClient(&utilities.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	dstClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
 	// Parse valid destination reference.
 	dstRef, err := reference.Parse("ghcr.io/valid/image:latest")
@@ -50,8 +50,8 @@ func TestClient_CopyImage_InvalidSourceReference(t *testing.T) {
 func TestClient_CopyIndex_InvalidSourceReference(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient(&shared.RegistryCredentials{Domain: "docker.io"}, discardLogger())
-	dstClient := registry.NewClient(&shared.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
+	client := registry.NewClient(&utilities.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	dstClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
 	// Parse valid destination reference.
 	dstRef, err := reference.Parse("ghcr.io/valid/image:latest")
@@ -82,7 +82,7 @@ func TestClient_CopyIndex_InvalidSourceReference(t *testing.T) {
 func TestClient_GetImage_NonExistent(t *testing.T) {
 	t.Parallel()
 
-	client := registry.NewClient(&shared.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	client := registry.NewClient(&utilities.RegistryCredentials{Domain: "docker.io"}, discardLogger())
 
 	ref, err := reference.Parse("docker.io/nonexistent/image:v999.999.999")
 	if err != nil {

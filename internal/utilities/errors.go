@@ -1,4 +1,4 @@
-package shared
+package utilities //revive:disable-line:var-naming
 
 import "errors"
 

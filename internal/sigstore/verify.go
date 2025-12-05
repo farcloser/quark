@@ -716,8 +716,8 @@ func extractTlogEntries(layer *v1.Descriptor) ([]*protorekor.TransparencyLogEntr
 		return nil, fmt.Errorf("%w: %w", ErrUnmarshalBody, err)
 	}
 
-	apiVersion, _ := bodyJSON["apiVersion"].(string) //nolint:revive // optional field
-	kind, _ := bodyJSON["kind"].(string)             //nolint:revive // optional field
+	apiVersion, _ := bodyJSON["apiVersion"].(string) //revive:disable-line:unchecked-type-assertion // optional field
+	kind, _ := bodyJSON["kind"].(string)             //revive:disable-line:unchecked-type-assertion // optional field
 
 	return []*protorekor.TransparencyLogEntry{
 		{

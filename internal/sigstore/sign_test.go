@@ -13,8 +13,8 @@ import (
 
 	"github.com/farcloser/quark/internal/reference"
 	"github.com/farcloser/quark/internal/registry"
-	"github.com/farcloser/quark/internal/shared"
 	"github.com/farcloser/quark/internal/sigstore"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 func discardLogger() *slog.Logger {
@@ -128,7 +128,7 @@ func TestSign_ValidECPrivateKey_FailsOnPush(t *testing.T) {
 	}
 
 	// Create a registry client (will fail on push since registry doesn't exist)
-	regClient := registry.NewClient(&shared.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
+	regClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
 	opts := &sigstore.SignOptions{
 		ImageRef:       *imageRef,
@@ -179,7 +179,7 @@ func TestSign_PKCS8PrivateKey_FailsOnPush(t *testing.T) {
 	}
 
 	// Create a registry client (will fail on push since registry doesn't exist)
-	regClient := registry.NewClient(&shared.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
+	regClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
 	opts := &sigstore.SignOptions{
 		ImageRef:       *imageRef,
@@ -219,7 +219,7 @@ func TestSimpleSigningPayload_Format(t *testing.T) {
 	//   }
 	// }
 
-	//nolint:tagliatelle,revive // JSON field names match cosign spec, nested struct for test clarity.
+	//nolint:tagliatelle // JSON field names match cosign spec, nested struct for test clarity.
 	type payloadFormat struct {
 		Critical struct {
 			Image struct {

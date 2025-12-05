@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/farcloser/quark/internal/shared"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 // scanMutex serializes scan operations to avoid Trivy database lock contention.
@@ -30,7 +30,7 @@ type trivyScanner struct {
 func (scanner *trivyScanner) ScanImage(
 	ctx context.Context,
 	imageRef string,
-	creds *shared.RegistryCredentials,
+	creds *utilities.RegistryCredentials,
 	platforms []string,
 ) (*ScanResult, error) {
 	// Login to registry if credentials provided
@@ -45,7 +45,7 @@ func (scanner *trivyScanner) ScanImage(
 	for _, platform := range platforms {
 		// Check context cancellation before each platform scan
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("%w: %w", shared.ErrCancelled, err)
+			return nil, fmt.Errorf("%w: %w", utilities.ErrCancelled, err)
 		}
 
 		result, err := scanner.scanPlatform(ctx, imageRef, platform)

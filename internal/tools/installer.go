@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/farcloser/quark/internal/shared"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 // Tool represents an external tool that can be auto-installed.
@@ -39,7 +39,7 @@ func NewInstaller(log *slog.Logger) *Installer {
 func (installer *Installer) Ensure(ctx context.Context, tool Tool) (string, error) {
 	// Check context before acquiring lock
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("%w: %w", shared.ErrCancelled, err)
+		return "", fmt.Errorf("%w: %w", utilities.ErrCancelled, err)
 	}
 
 	installer.mu.Lock()
@@ -67,11 +67,11 @@ func (installer *Installer) Ensure(ctx context.Context, tool Tool) (string, erro
 	// Tool not found - install it
 	installer.log.Debug(
 		"tool not found, installing...",
-		"tool",
+		"tool", //revive:disable-line:add-constant
 		tool.Name,
 		"version",
 		tool.Version,
-	) //revive:disable-line:add-constant
+	)
 
 	if err := installer.install(ctx, tool); err != nil {
 		return "", err

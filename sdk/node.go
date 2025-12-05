@@ -114,7 +114,7 @@ func (n *Node) Acquire(ctx context.Context) error {
 	case n.sem <- struct{}{}:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return ctx.Err() //nolint:wrapcheck // context errors are self-explanatory sentinels
 	}
 }
 

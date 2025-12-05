@@ -30,7 +30,7 @@ func TestAgeBackend(t *testing.T) {
 	t.Setenv("HADRON_AGE_IDENTITY", identityPath)
 
 	// Create test secret data
-	//nolint:gosec // G101: Test data with intentional hardcoded credentials
+
 	secretJSON := `{
 		"database": {
 			"host": "localhost",
@@ -44,7 +44,6 @@ func TestAgeBackend(t *testing.T) {
 	encryptedPath := filepath.Join(tmpDir, "secrets.json.age")
 	recipient := identity.Recipient()
 
-	//nolint:gosec // G304: Test file path in temporary directory
 	encryptedFile, err := os.Create(encryptedPath)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted file: %v", err)

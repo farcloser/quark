@@ -56,7 +56,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	testKeyPath := getTestKeyPath()
 	pubKeyPath := testKeyPath + ".pub"
 
-	pubKeyBytes, err := os.ReadFile(pubKeyPath) //nolint:gosec // Test key path from source file location
+	pubKeyBytes, err := os.ReadFile(pubKeyPath)
 	if err != nil {
 		t.Fatalf("failed to read test SSH public key: %v", err)
 	}
@@ -70,7 +70,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 		"docker",
 		"run",
 		"-d",
-		"--rm", //nolint:gosec // Test container with test-generated key
+		"--rm",
 		"--name",
 		containerName,
 		"debian:bookworm-slim",
@@ -97,12 +97,12 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 			"docker",
 			"stop",
 			containerName,
-		) //nolint:gosec // containerName is test-generated
+		)
 		_ = stopCmd.Run() // Best effort cleanup
 	})
 
 	// Get container IP address
-	ipCmd := exec.CommandContext(t.Context(), //nolint:gosec // containerName is test-generated
+	ipCmd := exec.CommandContext(t.Context(),
 		"docker", "inspect", "-f",
 		"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
 		containerName,
@@ -126,7 +126,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 			"-z",
 			containerIP,
 			"22",
-		) //nolint:gosec // containerIP is from Docker inspect
+		)
 		if ncCmd.Run() == nil {
 			sshReady = true
 
@@ -159,7 +159,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 		"ssh-keyscan",
 		"-H",
 		containerIP,
-	) //nolint:gosec // containerIP from Docker inspect
+	)
 
 	keyscanOutput, err := keyscanCmd.Output()
 	if err != nil {
@@ -167,7 +167,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	}
 
 	// Append to known_hosts
-	//nolint:gosec // Path from os.UserHomeDir
+
 	knownHostsFile, err := os.OpenFile(
 		knownHostsPath,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
@@ -186,7 +186,6 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 	t.Cleanup(func() {
 		_ = exec.CommandContext(t.Context(), "ssh-keygen", "-R", containerIP).
 			Run()
-		//nolint:gosec // containerIP from Docker
 	})
 
 	// Add test key to SSH agent for this session
@@ -199,7 +198,7 @@ func StartDebianSSHContainer(t *testing.T) *SSHContainer {
 		t.Context(),
 		"ssh-add",
 		testKeyPath,
-	) //nolint:gosec // Test key path from source file location
+	)
 
 	addKeyOutput, err := addKeyCmd.CombinedOutput()
 	if err != nil {

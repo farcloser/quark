@@ -20,7 +20,7 @@ import (
 	"go.farcloser.world/core/filesystem"
 
 	"github.com/farcloser/quark/dev/ssh"
-	"github.com/farcloser/quark/internal/utils"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 const (
@@ -64,7 +64,7 @@ func NewClient(sshConn ssh.Connection, nodeID string, log *slog.Logger) (*Client
 	hash := sha256.Sum256([]byte(nodeID))
 	hashStr := hex.EncodeToString(hash[:8]) // Use first 8 bytes (16 hex chars)
 
-	socketDir := filepath.Join(utils.RuntimeDir(), "quark", hashStr)
+	socketDir := filepath.Join(utilities.RuntimeDir(), "quark", hashStr)
 	if err := os.MkdirAll(socketDir, socketDirPerms); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateSocketDir, err)
 	}
@@ -256,7 +256,7 @@ func (c *Client) RegistryLogin(ctx context.Context, registry, username, password
 // Uses filesystem locking to prevent concurrent creation races.
 // The builder is created once and reused across builds.
 func (c *Client) EnsureBuilder(ctx context.Context) error {
-	lockDir := filepath.Join(utils.RuntimeDir(), "quark", "builder")
+	lockDir := filepath.Join(utilities.RuntimeDir(), "quark", "builder")
 	if err := os.MkdirAll(lockDir, socketDirPerms); err != nil {
 		return fmt.Errorf("%w: %w", ErrCreateBuilderLockDir, err)
 	}
@@ -317,7 +317,7 @@ func (c *Client) acceptLoop() {
 			case <-c.closed:
 				return // Normal shutdown
 			default:
-				c.log.Error("failed to accept connection", "error", err)
+				c.log.Error("failed to accept connection", "error", err) //revive:disable-line:add-constant
 
 				continue
 			}
@@ -425,7 +425,7 @@ func acquireSocket(socketPath, lockPath string) (net.Listener, bool, error) {
 			// Socket does not exist - create it
 			var listenErr error
 
-			listener, listenErr = net.Listen("unix", socketPath)
+			listener, listenErr = net.Listen("unix", socketPath) //nolint:noctx // Unix socket - local IPC
 			if listenErr != nil {
 				return fmt.Errorf("%w: %w", ErrCreateSocket, listenErr)
 			}
@@ -436,6 +436,7 @@ func acquireSocket(socketPath, lockPath string) (net.Listener, bool, error) {
 		}
 
 		// Socket exists - check if it's alive by trying to connect
+		//nolint:noctx // Unix socket - local IPC
 		conn, dialErr := net.DialTimeout("unix", socketPath, socketDialTimeout)
 		if dialErr == nil {
 			// Connection succeeded - socket is alive, reuse it
@@ -453,7 +454,7 @@ func acquireSocket(socketPath, lockPath string) (net.Listener, bool, error) {
 
 		var listenErr error
 
-		listener, listenErr = net.Listen("unix", socketPath)
+		listener, listenErr = net.Listen("unix", socketPath) //nolint:noctx // Unix socket - local IPC
 		if listenErr != nil {
 			return fmt.Errorf("%w: %w", ErrCreateSocket, listenErr)
 		}

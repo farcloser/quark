@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/internal/shared"
 	"github.com/farcloser/quark/internal/tools"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 //nolint:gochecknoglobals
@@ -34,7 +34,7 @@ type ScanResult struct {
 
 // Scanner provides auditing for container images.
 type Scanner interface {
-	ScanImage(ctx context.Context, imageRef string, creds *shared.RegistryCredentials) (*ScanResult, error)
+	ScanImage(ctx context.Context, imageRef string, creds *utilities.RegistryCredentials) (*ScanResult, error)
 }
 
 // NewScanner creates a new Dockle scanner.
@@ -47,7 +47,7 @@ func NewScanner(ctx context.Context, log *slog.Logger) (Scanner, error) {
 	// Ensure dockle is installed
 	scanner.docklePath, err = tools.NewInstaller(log).Ensure(ctx, dockleVersion)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", shared.ErrRequirementsFailed, err)
+		return nil, fmt.Errorf("%w: %w", utilities.ErrRequirementsFailed, err)
 	}
 
 	return scanner, nil

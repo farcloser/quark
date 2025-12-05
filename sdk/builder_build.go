@@ -115,7 +115,7 @@ func (ba *buildAction) acquireNode(ctx context.Context) (*Node, error) {
 		// All nodes at capacity - wait and retry
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, ctx.Err() //nolint:wrapcheck // context errors are self-explanatory sentinels
 		case <-time.After(nodeSelectInterval): // Retry selection
 		}
 	}

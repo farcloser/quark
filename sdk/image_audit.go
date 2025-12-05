@@ -145,7 +145,7 @@ func (*auditAction) FormatOutput(result *dockle.ScanResult, format *audit.Format
 	case audit.FormatJSON:
 		bytes, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("%w: %w", audit.ErrFormatOutput, err)
 		}
 
 		return string(bytes), nil

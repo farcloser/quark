@@ -85,7 +85,7 @@ type executableWrapper struct {
 }
 
 func (w *executableWrapper) Execute(ctx context.Context) error {
-	return w.res.Execute(ctx)
+	return w.res.Execute(ctx) //nolint:wrapcheck // pure delegation, resource wraps its own errors
 }
 
 func (w *executableWrapper) Name() string {

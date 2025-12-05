@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/internal/shared"
 	"github.com/farcloser/quark/internal/tools"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 // Severity levels for vulnerability findings.
@@ -65,7 +65,7 @@ type Scanner interface {
 	ScanImage(
 		ctx context.Context,
 		imageRef string,
-		creds *shared.RegistryCredentials,
+		creds *utilities.RegistryCredentials,
 		platforms []string,
 	) (*ScanResult, error)
 }
@@ -80,7 +80,7 @@ func NewScanner(ctx context.Context, log *slog.Logger) (Scanner, error) {
 	// Ensure trivy is installed
 	scanner.trivyPath, err = tools.NewInstaller(log).Ensure(ctx, trivyVersion)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", shared.ErrRequirementsFailed, err)
+		return nil, fmt.Errorf("%w: %w", utilities.ErrRequirementsFailed, err)
 	}
 
 	return scanner, nil

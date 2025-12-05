@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/farcloser/quark/internal/shared"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 // Scanner wraps Dockle CLI operations.
@@ -21,7 +21,7 @@ type dockleScanner struct {
 func (scanner *dockleScanner) ScanImage(
 	ctx context.Context,
 	imageRef string,
-	creds *shared.RegistryCredentials,
+	creds *utilities.RegistryCredentials,
 ) (*ScanResult, error) {
 	// Build dockle command
 	args := []string{"--format", "json", "--exit-code", "1", imageRef}

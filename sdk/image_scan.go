@@ -149,7 +149,7 @@ func (*scanAction) FormatOutput(result []*trivy.Result, format *scan.Format) (st
 	case scan.FormatJSON:
 		bytes, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("%w: %w", scan.ErrFormatOutput, err)
 		}
 
 		return string(bytes), nil

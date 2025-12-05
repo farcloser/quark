@@ -27,7 +27,7 @@ func getSSHPool() *ssh.Pool {
 // Should be called when the application is shutting down.
 func TearDown() error {
 	if sshPoolInstance != nil {
-		return sshPoolInstance.CloseAll()
+		return sshPoolInstance.CloseAll() //nolint:wrapcheck // pure delegation
 	}
 
 	return nil

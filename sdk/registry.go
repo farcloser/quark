@@ -7,7 +7,7 @@ import (
 
 	"github.com/farcloser/quark/dev/resource"
 	"github.com/farcloser/quark/internal/registry"
-	"github.com/farcloser/quark/internal/shared"
+	"github.com/farcloser/quark/internal/utilities"
 )
 
 const (
@@ -88,8 +88,8 @@ func (reg *Registry) NewImage(opts ImageOpts) *Image {
 }
 
 // credentials returns the registry credentials as a shared.RegistryCredentials.
-func (reg *Registry) credentials() *shared.RegistryCredentials {
-	return &shared.RegistryCredentials{
+func (reg *Registry) credentials() *utilities.RegistryCredentials {
+	return &utilities.RegistryCredentials{
 		Domain:   reg.opts.Domain,
 		Username: reg.opts.Username,
 		Token:    reg.opts.Token,

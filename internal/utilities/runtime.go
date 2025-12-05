@@ -1,4 +1,4 @@
-package utils
+package utilities //revive:disable-line:var-naming
 
 import (
 	"os"

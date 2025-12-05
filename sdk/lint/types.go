@@ -5,33 +5,33 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/farcloser/quark/dev/shared"
+	"github.com/farcloser/quark/dev/core"
 	"github.com/farcloser/quark/internal/godolint"
 )
 
-// Action is an alias for shared.Action for user convenience.
-type Action = shared.Action
+// Action is an alias for core.Action for user convenience.
+type Action = core.Action
 
 // Action constants aliased from shared package.
 //
 //nolint:gochecknoglobals // Action enum pattern requires global variables
 var (
-	ActionError = shared.ActionError
-	ActionWarn  = shared.ActionWarn
-	ActionInfo  = shared.ActionInfo
-	ActionDebug = shared.ActionDebug
+	ActionError = core.ActionError
+	ActionWarn  = core.ActionWarn
+	ActionInfo  = core.ActionInfo
+	ActionDebug = core.ActionDebug
 )
 
-// Format is an alias for shared.Format for user convenience.
-type Format = shared.Format
+// Format is an alias for core.Format for user convenience.
+type Format = core.Format
 
 // Format constants aliased from shared package.
 //
 //nolint:gochecknoglobals // Format enum pattern requires global variables
 var (
-	FormatTable = shared.FormatTable
-	FormatJSON  = shared.FormatJSON
-	FormatSARIF = shared.FormatSARIF
+	FormatTable = core.FormatTable
+	FormatJSON  = core.FormatJSON
+	FormatSARIF = core.FormatSARIF
 )
 
 // SetSeverityCheckStrict provides a strict default basis for linting.

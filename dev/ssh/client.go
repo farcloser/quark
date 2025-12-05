@@ -584,7 +584,7 @@ func (c *client) getSSHAgentAuth() (ssh.AuthMethod, error) {
 	}
 
 	// Connect to SSH agent
-	conn, err := net.Dial("unix", socket)
+	conn, err := net.Dial("unix", socket) //nolint:noctx // Unix socket - local IPC, not network
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to connect to agent socket: %w", ErrNoSSHAgent, err)
 	}
