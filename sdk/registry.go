@@ -1,97 +1,84 @@
 package sdk
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 
 	"github.com/farcloser/quark/dev/resource"
-	"github.com/farcloser/quark/internal/registry"
-	"github.com/farcloser/quark/internal/utilities"
-)
-
-const (
-	registryResourceName = "registry"
-	imageResourceName    = "image"
+	"github.com/farcloser/quark/internal/types"
 )
 
 // Registry represents a container registry with credentials.
 type Registry struct {
-	resource.BaseResource[Registry]
+	resource.Resource
 
-	opts RegistryOpts
+	options RegistryOpts
+	log     *slog.Logger
 }
 
 // RegistryOpts configures registry creation.
 type RegistryOpts struct {
-	Domain   string // Required - registry domain (e.g., "ghcr.io", "docker.io")
-	Username string // Optional - registry username
-	Token    string // Optional - registry token or password
+	// Moniker holds plan-defined metadata used purely for display
+	Moniker  string
+	Domain   string // registry domain (e.g., "ghcr.io", "docker.io")
+	Username string // registry username
+	Token    string // registry token or password
 }
 
 // NewRegistry creates a new Registry resource.
-// The registry is validated during plan execution via a ping check.
 func NewRegistry(opts RegistryOpts) *Registry {
-	name := registryResourceName
-	if opts.Domain != "" {
-		name = fmt.Sprintf("%s:%s", name, opts.Domain)
+	if opts.Domain == "" {
+		opts.Domain = defaultRegistry
 	}
 
-	reg := &Registry{
-		opts: opts,
+	moniker := opts.Moniker
+	if moniker == "" {
+		moniker = opts.Domain
 	}
 
-	reg.BaseResource = resource.NewBaseResource(reg, name)
-
-	return reg
-}
-
-// Execute performs preflight authentication check against the registry.
-func (reg *Registry) Execute(ctx context.Context) error {
-	slog.DebugContext(ctx, "authenticating with registry", "domain", reg.opts.Domain)
-
-	client := registry.NewClient(reg.credentials(), slog.With("", ""))
-
-	if err := client.Ping(ctx); err != nil {
-		return fmt.Errorf("%w: %s: %w", ErrRegistryAuth, reg.ResourceName(), err)
+	output := &Registry{
+		options: opts,
+		log:     slog.With(registryResourceName, moniker),
 	}
 
-	slog.DebugContext(ctx, "registry authentication successful", "domain", reg.opts.Domain)
+	moniker = fmt.Sprintf("%s:%s", registryResourceName, moniker)
 
-	return nil
+	output.Resource = (&createRegistryAction{
+		BaseAction: resource.NewAction(fmt.Sprintf("%s:%s", actionCreateName, moniker)),
+		output:     output,
+	}).AddOutput(moniker, output)
+
+	return output
 }
 
 // NewImage creates a new Image resource associated with this registry.
-// The image automatically depends on the registry for authentication.
 func (reg *Registry) NewImage(opts ImageOpts) *Image {
-	name := imageResourceName
-	name = fmt.Sprintf("%s:%s", name, opts.Name)
-
-	if opts.Version != "" {
-		name = fmt.Sprintf("%s:%s", name, opts.Version)
+	moniker := opts.Moniker
+	if moniker == "" {
+		moniker = fmt.Sprintf("%s:%s:%s:%s", imageResourceName, opts.Name, opts.Version, opts.Digest)
 	}
 
-	if opts.Digest != "" {
-		name = fmt.Sprintf("%s@%s", name, opts.Digest)
-	}
-
-	img := &Image{
-		opts:     opts,
+	output := &Image{
+		options:  opts,
 		registry: reg,
-		log:      slog.With("image", name),
+		log:      reg.log.With(imageResourceName, moniker),
 	}
 
-	img.BaseResource = resource.NewBaseResource(img, name)
-	img.DependsOn(reg)
+	moniker = fmt.Sprintf("%s:%s", imageResourceName, moniker)
 
-	return img
+	output.Resource = (&createImageAction{
+		BaseAction: resource.NewAction(fmt.Sprintf("%s:%s", actionCreateName, moniker), reg),
+		output:     output,
+	}).AddOutput(moniker, output)
+
+	return output
 }
 
-// credentials returns the registry credentials as a shared.RegistryCredentials.
-func (reg *Registry) credentials() *utilities.RegistryCredentials {
-	return &utilities.RegistryCredentials{
-		Domain:   reg.opts.Domain,
-		Username: reg.opts.Username,
-		Token:    reg.opts.Token,
+// credentials returns the registry credentials.
+func (reg *Registry) credentials() *types.RegistryCredentials {
+	return &types.RegistryCredentials{
+		Domain:   reg.options.Domain,
+		Username: reg.options.Username,
+		Password: reg.options.Token,
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"gotest.tools/v3/assert"
 
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/internal/types"
 )
 
 func TestReference(t *testing.T) {
@@ -21,7 +22,7 @@ func TestReference(t *testing.T) {
 		FamiliarName  string
 		FamiliarMatch map[string]bool
 		Protocol      reference.Protocol
-		Digest        reference.Digest
+		Digest        types.Digest
 		Path          string
 		Domain        string
 		Tag           string

@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/reference"
-	"github.com/farcloser/quark/internal/registry"
 	"github.com/farcloser/quark/internal/version"
 )
 

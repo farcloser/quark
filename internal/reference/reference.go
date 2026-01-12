@@ -6,20 +6,19 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
+
+	"github.com/farcloser/quark/internal/types"
 )
 
 // Protocol represents the protocol used for the image reference.
 type Protocol string
-
-// Digest is an alias for digest.Digest for user convenience.
-type Digest = digest.Digest
 
 const shortIDLength = 5
 
 // ImageReference represents a reference to an image, which may include a protocol, domain, path, tag, and digest.
 type ImageReference struct {
 	Protocol    Protocol
-	Digest      Digest
+	Digest      types.Digest
 	Tag         string
 	ExplicitTag string
 	Path        string

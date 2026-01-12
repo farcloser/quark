@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/internal/tools"
-	"github.com/farcloser/quark/internal/utilities"
+	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/dev/tools"
 )
 
 // Severity levels for vulnerability findings.
@@ -26,23 +26,31 @@ const (
 //nolint:gochecknoglobals
 var (
 	// Trivy vulnerability scanner - pinned to v0.59.1 (commit 9aabfd2).
-	trivyVersion = tools.Tool{
+	trivyTool = tools.GoTool{
 		Name:       "trivy",
 		ImportPath: "github.com/aquasecurity/trivy/cmd/trivy",
 		Version:    "9aabfd2", // v0.59.1 released 2025-02-05
 	}
 )
 
-// Vulnerability represents a single vulnerability finding.
+// PkgIdentifier contains package identification for VEX matching.
+//
+//nolint:tagliatelle
+type PkgIdentifier struct {
+	PURL string `json:"PURL"`
+}
+
+// Vulnerability represents a single vulnerability finding from Trivy output.
 //
 //nolint:tagliatelle
 type Vulnerability struct {
-	VulnerabilityID  string `json:"VulnerabilityID"`
-	PkgName          string `json:"PkgName"`
-	InstalledVersion string `json:"InstalledVersion"`
-	FixedVersion     string `json:"FixedVersion"`
-	Severity         string `json:"Severity"`
-	Title            string `json:"Title"`
+	VulnerabilityID  string        `json:"VulnerabilityID"`
+	PkgName          string        `json:"PkgName"`
+	InstalledVersion string        `json:"InstalledVersion"`
+	FixedVersion     string        `json:"FixedVersion"`
+	Severity         string        `json:"Severity"`
+	Title            string        `json:"Title"`
+	PkgIdentifier    PkgIdentifier `json:"PkgIdentifier"`
 }
 
 // Result represents a scan result for a specific target.
@@ -60,13 +68,22 @@ type ScanResult struct {
 	Results []Result `json:"Results"`
 }
 
+// ScanOptions configures scan behavior.
+type ScanOptions struct {
+	// ShowSuppressed logs vulnerabilities that were filtered by VEX attestations.
+	ShowSuppressed bool
+	// VEXPaths contains paths to VEX files to apply during scanning.
+	// These are passed to Trivy via --vex flags.
+	VEXPaths []string
+}
+
 // Scanner provides vulnerability scanning for container images.
 type Scanner interface {
 	ScanImage(
 		ctx context.Context,
 		imageRef string,
-		creds *utilities.RegistryCredentials,
 		platforms []string,
+		opts *ScanOptions,
 	) (*ScanResult, error)
 }
 
@@ -78,9 +95,9 @@ func NewScanner(ctx context.Context, log *slog.Logger) (Scanner, error) {
 
 	var err error
 	// Ensure trivy is installed
-	scanner.trivyPath, err = tools.NewInstaller(log).Ensure(ctx, trivyVersion)
+	scanner.trivyPath, err = tools.NewGoInstaller(log, trivyTool).Ensure(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", utilities.ErrRequirementsFailed, err)
+		return nil, fmt.Errorf("%w: %w", fault.ErrMissingRequirements, err)
 	}
 
 	return scanner, nil

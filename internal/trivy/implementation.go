@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"github.com/farcloser/quark/internal/utilities"
 )
 
 // scanMutex serializes scan operations to avoid Trivy database lock contention.
@@ -26,29 +24,23 @@ type trivyScanner struct {
 
 // ScanImage scans an image for vulnerabilities across multiple platforms.
 // Always scans both linux/amd64 and linux/arm64 platforms and aggregates results.
-// If registry credentials are provided, logs in to the registry before scanning.
+// Registry authentication is handled by the registry Execute() action via docker login,
+// which stores credentials in Docker's config for trivy to use automatically.
 func (scanner *trivyScanner) ScanImage(
 	ctx context.Context,
 	imageRef string,
-	creds *utilities.RegistryCredentials,
 	platforms []string,
+	opts *ScanOptions,
 ) (*ScanResult, error) {
-	// Login to registry if credentials provided
-	if creds != nil && creds.Domain != "" && creds.Username != "" && creds.Token != "" {
-		if err := scanner.registryLogin(ctx, creds.Domain, creds.Username, creds.Token); err != nil {
-			return nil, err
-		}
-	}
-
 	var aggregatedResult ScanResult
 
 	for _, platform := range platforms {
 		// Check context cancellation before each platform scan
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("%w: %w", utilities.ErrCancelled, err)
+			return nil, fmt.Errorf("scan cancelled: %w", err)
 		}
 
-		result, err := scanner.scanPlatform(ctx, imageRef, platform)
+		result, err := scanner.scanPlatform(ctx, imageRef, platform, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -65,6 +57,7 @@ func (scanner *trivyScanner) scanPlatform(
 	ctx context.Context,
 	imageRef string,
 	platform string,
+	opts *ScanOptions,
 ) (*ScanResult, error) {
 	scanner.log.DebugContext(ctx, "scanning platform", "platform", platform) //revive:disable-line:add-constant
 
@@ -79,8 +72,24 @@ func (scanner *trivyScanner) scanPlatform(
 		"--format", "json", // Always use JSON for parsing
 		"--severity", "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
 		"--quiet", // Suppress progress output
-		imageRef,
 	}
+
+	// Add optional flags
+	if opts != nil {
+		if opts.ShowSuppressed {
+			args = append(args, "--show-suppressed")
+		}
+
+		// Add VEX files if provided
+		for _, vexPath := range opts.VEXPaths {
+			args = append(args, "--vex", vexPath)
+		}
+	}
+
+	args = append(args, imageRef)
+
+	scanner.log.DebugContext(ctx, "executing trivy command",
+		"command", scanner.trivyPath+" "+strings.Join(args, " "))
 
 	//nolint:gosec // Command args are from trusted config
 	cmd := exec.CommandContext(ctx, scanner.trivyPath, args...)
@@ -135,6 +144,9 @@ func (scanner *trivyScanner) scanPlatform(
 		return nil, fmt.Errorf("%w (%s): %w", ErrParsingFailed, platform, err)
 	}
 
+	// Filter out false positives
+	filterFalsePositives(result)
+
 	scanner.log.DebugContext(ctx, "platform scan complete", //revive:disable-line:add-constant
 		"platform", platform, "vulnerabilities", countVulnerabilities(result))
 
@@ -150,40 +162,27 @@ func countVulnerabilities(result *ScanResult) int {
 	return count
 }
 
-// registryLogin logs in to a registry using trivy registry login.
-// This stores credentials in Docker's config (~/.docker/config.json) and keeps
-// them out of the process list. Credentials are only sent to the specific registry.
-func (scanner *trivyScanner) registryLogin(ctx context.Context, registryHost, username, password string) error {
-	scanner.log.DebugContext(ctx, "registryLogin: start", "registry", registryHost) //revive:disable-line:add-constant
+// filterFalsePositives removes known false positive vulnerabilities from scan results.
+// Currently filters kernel CVEs reported against linux-libc-dev, which contains only
+// header files and cannot be affected by kernel runtime bugs.
+func filterFalsePositives(result *ScanResult) {
+	for idx := range result.Results {
+		filtered := result.Results[idx].Vulnerabilities[:0]
 
-	// Use --password-stdin to avoid password in process list
-	//nolint:gosec
-	cmd := exec.CommandContext(
-		ctx,
-		scanner.trivyPath,
-		"registry", //revive:disable-line:add-constant
-		"login",
-		registryHost,
-		"--username",
-		username,
-		"--password-stdin",
-	)
-	cmd.Stdin = strings.NewReader(password)
+		for _, vuln := range result.Results[idx].Vulnerabilities {
+			if !isKernelFalsePositive(vuln) {
+				filtered = append(filtered, vuln)
+			}
+		}
 
-	// Capture output for error reporting
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		scanner.log.DebugContext(
-			ctx,
-			"registryLogin: fail",
-			"registry", //revive:disable-line:add-constant
-			registryHost,
-		) //revive:disable-line:add-constant
-
-		return fmt.Errorf("%w: %w\n%s", ErrUnableToLogin, err, output)
+		result.Results[idx].Vulnerabilities = filtered
 	}
+}
 
-	scanner.log.DebugContext(ctx, "registryLogin: success", "registry", registryHost) //revive:disable-line:add-constant
-
-	return nil
+// isKernelFalsePositive returns true if the vulnerability is a kernel bug reported
+// against linux-libc-dev. The linux-libc-dev package contains only C header files
+// defining kernel interfaces - no executable code. Kernel CVEs (identified by titles
+// starting with "kernel:") cannot affect header-only packages.
+func isKernelFalsePositive(vuln Vulnerability) bool {
+	return vuln.PkgName == "linux-libc-dev" && strings.HasPrefix(vuln.Title, "kernel:")
 }

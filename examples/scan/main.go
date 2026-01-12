@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/farcloser/quark/sdk"
+	sdklog "github.com/farcloser/quark/sdk/logger"
+	"github.com/farcloser/quark/sdk/policy"
 	"github.com/farcloser/quark/sdk/scan"
 )
 
@@ -30,23 +32,27 @@ func main() {
 	})
 
 	// Scan image for vulnerabilities
-	// Fail on critical vulnerabilities, warn on high severity
-	scannedImage := exampleImage.Scan(&scan.Options{
-		SeverityChecks: []scan.SeverityCheck{
-			{
-				Severities: []*scan.Severity{scan.SeverityCritical},
-				Action:     scan.ActionError,
-			},
-			{
-				Severities: []*scan.Severity{scan.SeverityHigh},
-				Action:     scan.ActionWarn,
-			},
+	scannedImage := exampleImage.Scan(&scan.Options{})
+
+	// Apply policy: fail on critical vulnerabilities, allow up to 10 high
+	checkedImage := scannedImage.Check(
+		policy.Scan{
+			Critical: 0,
+			High:     10,
+			Medium:   policy.Ignore,
+			Low:      policy.Ignore,
+			Unknown:  policy.Ignore,
 		},
-		Format: scan.FormatTable,
+	)
+
+	// Log results with severity-based log levels
+	loggedImage := checkedImage.Log(&sdklog.Options{
+		Format:     sdklog.FormatTable,
+		ScanLevels: sdklog.ScanLevelsDefault,
 	})
 
-	// Add scanned image to plan - dependencies are auto-discovered
-	plan.Add(scannedImage)
+	// Add logged image to plan - dependencies are auto-discovered
+	plan.Add(loggedImage)
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {

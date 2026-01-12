@@ -2,13 +2,21 @@ package dag
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 )
 
-// ErrCycleDetected is returned when a cycle is detected in the graph.
-var ErrCycleDetected = errors.New("cycle detected in dependency graph")
+// TraceEntry records timing information for a single node execution.
+type TraceEntry struct {
+	NodeID   string
+	NodeName string
+	Start    time.Time
+	End      time.Time
+	Duration time.Duration
+	Deps     []string
+}
 
 // Executable is the interface that nodes must implement to be executed.
 type Executable interface {
@@ -18,13 +26,15 @@ type Executable interface {
 
 // Node wraps an executable with its dependencies.
 type Node[T Executable] struct {
-	id       string
-	exec     T
-	deps     []*Node[T]
-	executed bool
-	err      error
-	mu       sync.Mutex
-	done     chan struct{}
+	id        string
+	exec      T
+	deps      []*Node[T]
+	executed  bool
+	err       error
+	mu        sync.Mutex
+	done      chan struct{}
+	startTime time.Time
+	endTime   time.Time
 }
 
 // NewNode creates a new node wrapping an executable.
@@ -197,17 +207,27 @@ func (g *Graph[T]) Reverse() *Graph[T] {
 // Execute runs all nodes in the graph respecting dependencies.
 // Independent nodes run in parallel. Execution stops on first error.
 func (g *Graph[T]) Execute(ctx context.Context) error {
+	_, err := g.ExecuteWithTrace(ctx)
+
+	return err
+}
+
+// ExecuteWithTrace runs all nodes and returns trace entries with timing information.
+// Independent nodes run in parallel. Execution stops on first error.
+func (g *Graph[T]) ExecuteWithTrace(ctx context.Context) ([]TraceEntry, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	if len(g.nodes) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Check for cycles
 	if err := g.detectCycle(); err != nil {
-		return err
+		return nil, err
 	}
+
+	slog.DebugContext(ctx, "dag: starting execution", slog.Int("nodes", len(g.nodes)))
 
 	// Create error channel and wait group
 	errCh := make(chan error, len(g.nodes))
@@ -226,8 +246,16 @@ func (g *Graph[T]) Execute(ctx context.Context) error {
 			defer waitGroup.Done()
 			defer close(currentNode.done)
 
+			slog.DebugContext(execCtx, "dag: node waiting for dependencies",
+				slog.String("node", currentNode.exec.Name()),
+				slog.Int("deps", len(currentNode.deps)))
+
 			// Wait for all dependencies to complete
 			for _, dep := range currentNode.deps {
+				slog.DebugContext(execCtx, "dag: node waiting for dep",
+					slog.String("node", currentNode.exec.Name()),
+					slog.String("dep", dep.exec.Name()))
+
 				select {
 				case <-execCtx.Done():
 					currentNode.mu.Lock()
@@ -244,22 +272,40 @@ func (g *Graph[T]) Execute(ctx context.Context) error {
 
 						return
 					}
+
+					slog.DebugContext(execCtx, "dag: dep completed",
+						slog.String("node", currentNode.exec.Name()),
+						slog.String("dep", dep.exec.Name()))
 				}
 			}
 
+			slog.DebugContext(execCtx, "dag: node executing",
+				slog.String("node", currentNode.exec.Name()))
+
+			// Record start time
+			currentNode.startTime = time.Now()
+
 			// Execute this node
-			if err := currentNode.exec.Execute(execCtx); err != nil {
+			execErr := currentNode.exec.Execute(execCtx)
+
+			// Record end time
+			currentNode.endTime = time.Now()
+
+			if execErr != nil {
 				currentNode.mu.Lock()
-				currentNode.err = err
+				currentNode.err = execErr
 				currentNode.executed = true
 				currentNode.mu.Unlock()
 
-				errCh <- fmt.Errorf("%s: %w", currentNode.exec.Name(), err)
+				errCh <- fmt.Errorf("%s: %w", currentNode.exec.Name(), execErr)
 
 				cancel() // Cancel other goroutines
 
 				return
 			}
+
+			slog.DebugContext(execCtx, "dag: node completed",
+				slog.String("node", currentNode.exec.Name()))
 
 			currentNode.mu.Lock()
 			currentNode.executed = true
@@ -267,7 +313,7 @@ func (g *Graph[T]) Execute(ctx context.Context) error {
 		}(node)
 	}
 
-	// Wait for completion in a separate goroutine
+	// Wait for all goroutines, then close error channel
 	go func() {
 		waitGroup.Wait()
 		close(errCh)
@@ -275,8 +321,29 @@ func (g *Graph[T]) Execute(ctx context.Context) error {
 
 	// Return first error, if any
 	for err := range errCh {
-		return err
+		return nil, err
 	}
 
-	return nil
+	// No error - all goroutines finished, collect trace entries from nodes
+	var traces []TraceEntry
+
+	for _, node := range g.nodes {
+		if !node.startTime.IsZero() {
+			deps := make([]string, 0, len(node.deps))
+			for _, dep := range node.deps {
+				deps = append(deps, dep.id)
+			}
+
+			traces = append(traces, TraceEntry{
+				NodeID:   node.id,
+				NodeName: node.exec.Name(),
+				Start:    node.startTime,
+				End:      node.endTime,
+				Duration: node.endTime.Sub(node.startTime),
+				Deps:     deps,
+			})
+		}
+	}
+
+	return traces, nil
 }

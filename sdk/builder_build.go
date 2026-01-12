@@ -4,137 +4,141 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/farcloser/quark/dev/resource"
-	"github.com/farcloser/quark/internal/buildkit"
+	"github.com/farcloser/quark/internal/buildctl"
+	"github.com/farcloser/quark/internal/builder"
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/internal/utilities"
 	"github.com/farcloser/quark/sdk/build"
+	"github.com/farcloser/quark/sdk/platform"
 )
 
-const nodeSelectInterval = 1 * time.Second
-
 type buildAction struct {
-	resource.BaseResource[buildAction]
+	*resource.BaseAction
 
-	log     *slog.Logger
 	builder *Builder
-	image   *Image
+	output  *Image
 	nodes   []*Node
 	opts    *build.Options
 }
 
+func (ba *buildAction) AddOutput(name string, out resource.Resource, copyFrom ...resource.Resource) resource.Resource {
+	return resource.RegisterOutput(ba, ba.BaseAction, name, out, copyFrom...)
+}
+
 // Execute performs the multi-platform build.
 func (ba *buildAction) Execute(ctx context.Context) error {
-	// Validate required nodes
-	if len(ba.nodes) == 0 {
-		return build.ErrNodeRequired
-	}
+	output := ba.output
+	imageTag := output.ref.String()
 
-	imageTag := ba.image.ref.String()
-
-	// Select and acquire a node
-	node, err := ba.acquireNode(ctx)
+	// Acquire a node slot via scheduler (blocks until available)
+	node, err := defaultScheduler.Acquire(ctx, ba.nodes)
 	if err != nil {
 		return fmt.Errorf("%w: %w", build.ErrBuildFailed, err)
 	}
-	defer node.Release()
 
-	ba.log.InfoContext(ctx, "starting build",
+	output.log.InfoContext(ctx, "starting build",
 		slog.String("image", imageTag),
-		slog.String("node", node.ResourceName()))
+		slog.String("node", node.Moniker()))
 
-	// Create buildkit client using node's SSH connection
-	client, err := buildkit.NewClient(node.Connection(), node.ResourceName(), ba.log)
+	// Create builder client using node's SSH connection
+	client, err := buildctl.NewClient(ctx, node.Connection(), output.log)
 	if err != nil {
+		defaultScheduler.Release(node)
+
 		return fmt.Errorf("%w: %w", build.ErrBuildFailed, err)
 	}
+
+	// CRITICAL: Release scheduler slot BEFORE closing client.
+	// This allows queued builds to acquire the socket and keep it alive,
+	// preventing client.Close() from blocking on socket shutdown.
 	defer client.Close()
+	defer defaultScheduler.Release(node)
 
-	// Login to registry if credentials are available
-	if ba.image.registry != nil && ba.image.registry.opts.Username != "" {
-		if err := client.RegistryLogin(ctx,
-			ba.image.registry.opts.Domain,
-			ba.image.registry.opts.Username,
-			ba.image.registry.opts.Token,
-		); err != nil {
-			return fmt.Errorf("%w: registry login: %w", build.ErrBuildFailed, err)
-		}
-	}
+	// Build options
+	opts := ba.buildOptions(imageTag)
 
-	// Convert platforms to strings
-	var platforms []string
-
-	if ba.opts != nil {
-		for _, p := range ba.opts.Platforms {
-			if p != nil {
-				platforms = append(platforms, p.String())
-			}
-		}
-	}
-
-	// Get build args
-	var args map[string]string
-	if ba.opts != nil {
-		args = ba.opts.Args
-	}
-
-	// Build multi-platform and push
-	dgst, err := client.BuildMultiPlatform(ctx,
-		ba.builder.opts.Context,
-		ba.builder.opts.Dockerfile,
-		platforms,
-		[]string{imageTag},
-		args,
-	)
+	// Prepare secrets
+	preparedSecrets, err := ba.prepareSecrets()
 	if err != nil {
 		return fmt.Errorf("%w: %w", build.ErrBuildFailed, err)
 	}
 
-	// Store the digest on the image
-	ba.image.ref.Digest = reference.Digest(dgst)
+	defer func() {
+		for _, s := range preparedSecrets {
+			s.Release()
+		}
+	}()
 
-	ba.log.InfoContext(ctx, "build complete",
+	opts.Secrets = preparedSecrets
+
+	// Build and push
+	dgst, err := client.Build(ctx, opts)
+	if err != nil {
+		return fmt.Errorf("%w: %w", build.ErrBuildFailed, err)
+	}
+
+	// Store the digest on the output image
+	output.ref.Digest = reference.Digest(dgst)
+
+	output.log.InfoContext(ctx, "build complete",
 		slog.String("image", imageTag),
-		slog.String("node", node.ResourceName()),
+		slog.String("node", node.Moniker()),
 		slog.String("digest", dgst))
 
 	return nil
 }
 
-// acquireNode selects and acquires a build slot on the least busy node.
-// If all nodes are at capacity, it blocks until a slot becomes available.
-func (ba *buildAction) acquireNode(ctx context.Context) (*Node, error) {
-	for {
-		// Try to acquire the least busy node without blocking
-		node := ba.selectLeastBusy()
-		if node != nil && node.TryAcquire() {
-			return node, nil
-		}
+// buildOptions constructs BuildOptions from the action's configuration.
+func (ba *buildAction) buildOptions(imageTag string) builder.BuildOptions {
+	// Ensure opts is not nil
+	if ba.opts == nil {
+		ba.opts = &build.Options{}
+	}
 
-		// All nodes at capacity - wait and retry
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err() //nolint:wrapcheck // context errors are self-explanatory sentinels
-		case <-time.After(nodeSelectInterval): // Retry selection
+	// Default platforms if not specified
+	platforms := ba.opts.Platforms
+	if platforms == nil {
+		platforms = []*platform.Platform{platform.ARM64, platform.AMD64}
+	}
+
+	// Convert platforms to strings
+	var platformStrs []string
+
+	for _, p := range platforms {
+		if p != nil {
+			platformStrs = append(platformStrs, p.String())
 		}
+	}
+
+	// Convert extra hosts to strings
+	var extraHosts []string
+	for host, ip := range ba.opts.ExtraHosts {
+		extraHosts = append(extraHosts, host+":"+ip.String())
+	}
+
+	return builder.BuildOptions{
+		ContextPath:    ba.builder.options.Context,
+		DockerfilePath: ba.builder.options.Dockerfile,
+		Platforms:      platformStrs,
+		Tags:           []string{imageTag},
+		BuildArgs:      utilities.MergeMaps(ba.builder.options.Args, ba.opts.Args),
+		Target:         ba.opts.Target,
+		ExtraHosts:     extraHosts,
+		NoLog:          ba.opts.NoLog,
 	}
 }
 
-// selectLeastBusy returns the node with the most available capacity.
-// Returns nil if no nodes have available slots.
-func (ba *buildAction) selectLeastBusy() *Node {
-	var best *Node
+// prepareSecrets prepares secret files from the merged secrets configuration.
+func (ba *buildAction) prepareSecrets() ([]*builder.SecretFile, error) {
+	// Merge base secrets from builder with per-build secrets (per-build overrides base)
+	mergedSecrets := utilities.MergeMaps(ba.builder.options.Secrets, ba.opts.Secrets)
 
-	bestAvailable := 0
-
-	for _, node := range ba.nodes {
-		available := node.Available()
-		if available > bestAvailable {
-			best = node
-			bestAvailable = available
-		}
+	var secretInputs []struct{ ID, Content string }
+	for secretID, content := range mergedSecrets {
+		secretInputs = append(secretInputs, struct{ ID, Content string }{ID: secretID, Content: content})
 	}
 
-	return best
+	return builder.PrepareSecrets(secretInputs)
 }

@@ -1,13 +1,10 @@
 package ssh
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 )
-
-var errClosingConnections = errors.New("errors closing connections")
 
 // Pool manages SSH connections to multiple hosts.
 // It ensures one connection per unique host and reuses connections.
@@ -70,7 +67,7 @@ func (p *Pool) GetClientWithKey(endpoint, fingerprint, keyContent string) (Conne
 
 	client := newClient(endpoint, fingerprint, keyContent)
 	if err := client.connect(); err != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", key, err)
+		return nil, fmt.Errorf("%w to %s: %w", ErrConnect, key, err)
 	}
 
 	p.clients[key] = client
@@ -97,7 +94,7 @@ func (p *Pool) CloseAll() error {
 	p.clients = make(map[string]*client)
 
 	if len(errs) > 0 {
-		return fmt.Errorf("%w: %v", errClosingConnections, errs)
+		return fmt.Errorf("%w: %v", ErrClosingConnections, errs)
 	}
 
 	return nil

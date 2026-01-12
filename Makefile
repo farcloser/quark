@@ -162,7 +162,14 @@ install-dev-gotestsum:
 		&& go install gotest.tools/gotestsum@c4a0df2e75a225d979a444342dd3db752b53619f
 	$(call footer, $@)
 
-install-dev-tools: install-dev-gotestsum
+install-dev-jsonschema:
+	# go-jsonschema: v0.20.0 (omissis fork, 2025-06-19)
+	$(call title, $@)
+	@cd $(MAKEFILE_DIR) \
+		&& go install github.com/atombender/go-jsonschema@v0.20.0
+	$(call footer, $@)
+
+install-dev-tools: install-dev-gotestsum install-dev-jsonschema
 	$(call title, $@)
 	# golangci: v2.7.1 (2025-12-04)
 	# git-validation: main (2025-02-25)
@@ -197,7 +204,8 @@ test-unit-race:
 	test \
 	up \
 	unit \
-	install-dev-tools \
+	generate \
+	install-dev-tools install-dev-gotestsum install-dev-jsonschema \
 	lint-commits lint-go lint-go-all lint-headers lint-licenses lint-licenses-all lint-mod lint-shell lint-yaml \
 	fix-go fix-go-all fix-mod \
 	test-unit test-unit-race test-unit-bench \
@@ -214,6 +222,12 @@ BINARY_PATH=./bin/$(BINARY_NAME)
 GOCMD=go
 GOBUILD=$(GOCMD) build
 GOINSTALL=$(GOCMD) install
+
+generate: install-dev-jsonschema ## Generate code from schemas
+	$(call title, $@)
+	@cd $(MAKEFILE_DIR) \
+		&& go generate ./...
+	$(call footer, $@)
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."

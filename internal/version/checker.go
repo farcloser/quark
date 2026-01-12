@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/reference"
-	"github.com/farcloser/quark/internal/registry"
-	"github.com/farcloser/quark/internal/utilities"
 )
 
 //nolint:gochecknoglobals
@@ -64,7 +64,7 @@ func (checker *Checker) CheckVersion(ctx context.Context, imageRef reference.Ima
 
 	// Require a tag for version checking
 	if currentTag == "" {
-		return nil, fmt.Errorf("%w: %s", utilities.ErrInvalidArgument, imageRef.String())
+		return nil, fmt.Errorf("%w: %s", fault.ErrInvalidArgument, imageRef.String())
 	}
 
 	currentParts := parseVersion(currentTag)
@@ -112,7 +112,7 @@ func (checker *Checker) CheckVersion(ctx context.Context, imageRef reference.Ima
 
 	latestImageRef, err := reference.Parse(latestTagStr)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to parse latest tag: %w", utilities.ErrInvalidArgument, err)
+		return nil, fmt.Errorf("%w: failed to parse latest tag: %w", fault.ErrInvalidArgument, err)
 	}
 
 	latestDigest, err := checker.client.GetDigest(ctx, *latestImageRef)

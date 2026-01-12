@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/farcloser/quark/dev/ssh"
-	"github.com/farcloser/quark/testutil"
+	testssh "github.com/farcloser/quark/testutil/ssh"
 )
 
 const skipIntegrationMsg = "skipping integration test in short mode"
@@ -18,7 +18,7 @@ func TestConnection_Execute(t *testing.T) {
 		t.Skip(skipIntegrationMsg)
 	}
 
-	container := testutil.StartDebianSSHContainer(t)
+	container := testssh.EnsureDebianContainer(t)
 	client := container.Client()
 
 	t.Run("executes simple command and captures stdout", func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPool_GetClient(t *testing.T) {
 		t.Skip(skipIntegrationMsg)
 	}
 
-	container := testutil.StartDebianSSHContainer(t)
+	container := testssh.EnsureDebianContainer(t)
 	endpoint := container.Endpoint
 
 	t.Run("creates new connection", func(t *testing.T) {
@@ -198,7 +198,7 @@ func TestPool_CloseAll(t *testing.T) {
 		t.Skip(skipIntegrationMsg)
 	}
 
-	container := testutil.StartDebianSSHContainer(t)
+	container := testssh.EnsureDebianContainer(t)
 	endpoint := container.Endpoint
 
 	t.Run("closes all connections", func(t *testing.T) {

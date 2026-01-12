@@ -4,95 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/farcloser/quark/dev/core"
 )
-
-// Action is an alias for core.Action for user convenience.
-type Action = core.Action
-
-// Action constants aliased from shared package.
-//
-//nolint:gochecknoglobals // Action enum pattern requires global variables
-var (
-	ActionError = core.ActionError
-	ActionWarn  = core.ActionWarn
-	ActionInfo  = core.ActionInfo
-	ActionDebug = core.ActionDebug
-)
-
-// Format is an alias for core.Format for user convenience.
-type Format = core.Format
-
-// Format constants aliased from shared package.
-//
-//nolint:gochecknoglobals // Format enum pattern requires global variables
-var (
-	FormatTable = core.FormatTable
-	FormatJSON  = core.FormatJSON
-	FormatSARIF = core.FormatSARIF
-)
-
-// SetSeverityCheckStrict provides a strict default basis for auditing.
-//
-//nolint:gochecknoglobals // Preset sets require global variables
-var SetSeverityCheckStrict = []SeverityCheck{
-	{
-		Levels: []*Severity{
-			SeverityFatal,
-			SeverityWarn,
-		},
-		Action: ActionError,
-	},
-	{
-		Levels: []*Severity{
-			SeverityInfo,
-		},
-		Action: ActionWarn,
-	},
-}
-
-// SetSeverityCheckRecommended provides a balanced default basis for auditing.
-//
-//nolint:gochecknoglobals // Preset sets require global variables
-var SetSeverityCheckRecommended = []SeverityCheck{
-	{
-		Levels: []*Severity{
-			SeverityFatal,
-		},
-		Action: ActionError,
-	},
-	{
-		Levels: []*Severity{
-			SeverityWarn,
-		},
-		Action: ActionWarn,
-	},
-}
-
-// SetSeverityCheckLax provides a very lax, inform only basis for auditing.
-//
-//nolint:gochecknoglobals // Preset sets require global variables
-var SetSeverityCheckLax = []SeverityCheck{
-	{
-		Levels: []*Severity{
-			SeverityFatal,
-		},
-		Action: ActionWarn,
-	},
-}
 
 // Options configures audit behavior.
 type Options struct {
-	SeverityChecks []SeverityCheck // Optional - level checks (default: FATAL+WARN error)
-	Ignore         []string        // Dockle checks to ignore (e.g., "CIS-DI-0005")
-	Format         *Format         // Optional - output format (default: table)
-}
-
-// SeverityCheck represents a level check with an action.
-type SeverityCheck struct {
-	Levels []*Severity `json:"levels,omitempty"`
-	Action *Action     `json:"action,omitempty"`
+	Ignore []string // Dockle checks to ignore (e.g., "CIS-DI-0005")
 }
 
 // Severity represents dockle issue level.

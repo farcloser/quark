@@ -29,6 +29,9 @@ const (
 // Connection represents an active SSH connection.
 // All methods are safe for use within the context managed by Pool.
 type Connection interface {
+	// Endpoint returns the original endpoint string used to create this connection.
+	// This is guaranteed unique within a Pool.
+	Endpoint() string
 	Execute(command string) (stdout, stderr string, err error)
 	ExecuteStreaming(command string, stdout, stderr io.Writer) error
 	ExecuteWithStdin(command string, stdin []byte) error
@@ -191,6 +194,11 @@ func (c *client) ExecuteWithStdin(command string, stdin []byte) error {
 	return nil
 }
 
+// Endpoint returns the original endpoint string used to create this connection.
+func (c *client) Endpoint() string {
+	return c.endpoint
+}
+
 // String returns a string representation of the client.
 func (c *client) String() string {
 	if c.hostname != "" {
@@ -307,14 +315,14 @@ func (c *client) connect() error {
 			},
 			// AEAD ciphers only - no CBC mode
 			Ciphers: []string{
-				"chacha20-poly1305@openssh.org",
-				"aes256-gcm@openssh.org",
-				"aes128-gcm@openssh.org",
+				"chacha20-poly1305@openssh.com",
+				"aes256-gcm@openssh.com",
+				"aes128-gcm@openssh.com",
 			},
 			// Encrypt-then-MAC only
 			MACs: []string{
-				"hmac-sha2-256-etm@openssh.org",
-				"hmac-sha2-512-etm@openssh.org",
+				"hmac-sha2-256-etm@openssh.com",
+				"hmac-sha2-512-etm@openssh.com",
 			},
 		},
 		User: c.user,
@@ -473,12 +481,7 @@ func (*client) expandHomedir(path string) string {
 		return path
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path // Fallback to original path
-	}
-
-	return filepath.Join(home, path[2:])
+	return filepath.Join(filesystem.HomeDir(), path[2:])
 }
 
 // parseIdentityKey parses SSH key bytes and handles passphrase-protected keys.
@@ -654,11 +657,7 @@ func (c *client) fingerprintCallback() ssh.HostKeyCallback {
 
 // knownHostsCallback creates a host key callback that verifies against ~/.ssh/known_hosts.
 func (c *client) knownHostsCallback() (ssh.HostKeyCallback, error) {
-	// Get home directory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrGetHomeDir, err)
-	}
+	home := filesystem.HomeDir()
 
 	// Standard known_hosts path
 	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")

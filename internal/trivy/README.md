@@ -52,11 +52,10 @@ type ScanResult struct {
 
 // Errors
 var (
-    ErrRequirementsFailed error  // Trivy installation failed
-    ErrParsingFailed      error  // JSON output parsing failed
-    ErrLoginFailed        error  // Registry login failed
-    ErrScanFailed         error  // Scan operation failed
+    ErrParsingFailed error  // JSON output parsing failed
+    ErrUnableToScan  error  // Scan operation failed
 )
+// Also uses fault.ErrMissingRequirements for installation failures
 ```
 
 ## Design

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/reference"
-	"github.com/farcloser/quark/internal/registry"
 )
 
 // syncerImpl handles image synchronization between registries.

@@ -85,9 +85,6 @@ var (
 	// ErrCloseStdin indicates failure closing stdin.
 	ErrCloseStdin = errors.New("failed to close stdin")
 
-	// ErrGetHomeDir indicates failure getting home directory.
-	ErrGetHomeDir = errors.New("failed to get home directory")
-
 	// ErrKnownHosts indicates failure with known_hosts file.
 	ErrKnownHosts = errors.New("known_hosts error")
 
@@ -114,6 +111,9 @@ var (
 
 	// ErrDialUnixSocket indicates failure dialing remote unix socket.
 	ErrDialUnixSocket = errors.New("failed to dial remote unix socket")
+
+	// ErrClosingConnections happens when failing to close connection.
+	ErrClosingConnections = errors.New("errors closing connections")
 )
 
 // Internal errors (not exported, used for legacy compatibility during transition).

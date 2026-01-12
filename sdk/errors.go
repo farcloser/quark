@@ -10,6 +10,9 @@ import (
 var (
 	// ErrRegistryAuth indicates registry authentication failure.
 	ErrRegistryAuth = errors.New("registry authentication failed")
+
+	// ErrDockerLogin indicates docker login command failed.
+	ErrDockerLogin = errors.New("docker login failed")
 )
 
 // Image name errors.
@@ -28,4 +31,10 @@ var (
 
 	// ErrNodeConnectionFailed indicates SSH connection to node failed.
 	ErrNodeConnectionFailed = errors.New("failed to connect to node")
+)
+
+// Plan errors.
+var (
+	// ErrPlanExecutionFailed indicates plan execution failed.
+	ErrPlanExecutionFailed = errors.New("plan execution failed")
 )

@@ -4,10 +4,10 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/reference"
-	"github.com/farcloser/quark/internal/registry"
 	"github.com/farcloser/quark/internal/syncer"
-	"github.com/farcloser/quark/internal/utilities"
+	"github.com/farcloser/quark/internal/types"
 )
 
 func discardLogger() *slog.Logger {
@@ -18,8 +18,8 @@ func discardLogger() *slog.Logger {
 func TestNewSyncer(t *testing.T) {
 	t.Parallel()
 
-	srcClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "docker.io"}, discardLogger())
-	dstClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
+	srcClient := registry.NewClient(&types.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	dstClient := registry.NewClient(&types.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
 	synch, err := syncer.NewSyncer(srcClient, dstClient, discardLogger())
 	if err != nil {
@@ -48,11 +48,11 @@ func TestNewSyncer_NilClients(t *testing.T) {
 		{
 			name:      "source client nil",
 			srcClient: nil,
-			dstClient: registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger()),
+			dstClient: registry.NewClient(&types.RegistryCredentials{Domain: "ghcr.io"}, discardLogger()),
 		},
 		{
 			name:      "destination client nil",
-			srcClient: registry.NewClient(&utilities.RegistryCredentials{Domain: "docker.io"}, discardLogger()),
+			srcClient: registry.NewClient(&types.RegistryCredentials{Domain: "docker.io"}, discardLogger()),
 			dstClient: nil,
 		},
 	}
@@ -77,8 +77,8 @@ func TestNewSyncer_NilClients(t *testing.T) {
 func TestSyncer_Image_InvalidReferences(t *testing.T) {
 	t.Parallel()
 
-	srcClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "docker.io"}, discardLogger())
-	dstClient := registry.NewClient(&utilities.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
+	srcClient := registry.NewClient(&types.RegistryCredentials{Domain: "docker.io"}, discardLogger())
+	dstClient := registry.NewClient(&types.RegistryCredentials{Domain: "ghcr.io"}, discardLogger())
 
 	synch, err := syncer.NewSyncer(srcClient, dstClient, discardLogger())
 	if err != nil {

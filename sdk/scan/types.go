@@ -5,95 +5,35 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/farcloser/quark/dev/core"
+	"github.com/farcloser/quark/dev/fault"
 	"github.com/farcloser/quark/internal/trivy"
+	"github.com/farcloser/quark/sdk/platform"
 )
-
-// Action is an alias for core.Action for user convenience.
-type Action = core.Action
-
-// Action constants aliased from shared package.
-//
-//nolint:gochecknoglobals // Action enum pattern requires global variables
-var (
-	ActionError = core.ActionError
-	ActionWarn  = core.ActionWarn
-	ActionInfo  = core.ActionInfo
-	ActionDebug = core.ActionDebug
-)
-
-// Format is an alias for core.Format for user convenience.
-type Format = core.Format
-
-// Format constants aliased from shared package.
-//
-//nolint:gochecknoglobals // Format enum pattern requires global variables
-var (
-	FormatTable = core.FormatTable
-	FormatJSON  = core.FormatJSON
-	FormatSARIF = core.FormatSARIF
-)
-
-// SetSeverityCheckStrict provides a strict default basis for scanning.
-//
-//nolint:gochecknoglobals // Preset configuration for user convenience
-var SetSeverityCheckStrict = []SeverityCheck{
-	{
-		Severities: []*Severity{
-			SeverityCritical,
-			SeverityHigh,
-		},
-		Action: ActionError,
-	},
-	{
-		Severities: []*Severity{
-			SeverityMedium,
-		},
-		Action: ActionWarn,
-	},
-}
-
-// SetSeverityCheckRecommended provides a balanced default basis for scanning.
-//
-//nolint:gochecknoglobals // Preset configuration for user convenience
-var SetSeverityCheckRecommended = []SeverityCheck{
-	{
-		Severities: []*Severity{
-			SeverityCritical,
-		},
-		Action: ActionError,
-	},
-	{
-		Severities: []*Severity{
-			SeverityHigh,
-		},
-		Action: ActionWarn,
-	},
-}
-
-// SetSeverityCheckLax provides a very lax, inform only basis for scanning.
-//
-//nolint:gochecknoglobals // Preset configuration for user convenience
-var SetSeverityCheckLax = []SeverityCheck{
-	{
-		Severities: []*Severity{
-			SeverityCritical,
-		},
-		Action: ActionWarn,
-	},
-}
 
 // Options contains configuration for vulnerability scanning.
 type Options struct {
-	SeverityChecks []SeverityCheck // Optional - severity checks (default: HIGH+CRITICAL error)
-	Ignore         []string        // CVE IDs to ignore (e.g., "CVE-2022-41723")
-	Format         *Format         // Optional - output format (default: table)
+	// ShowSuppressed logs vulnerabilities that were filtered by VEX attestations.
+	ShowSuppressed bool
 }
 
-// SeverityCheck represents a severity check with an action.
-type SeverityCheck struct {
-	Severities []*Severity `json:"severities,omitempty"`
-	Action     *Action     `json:"action,omitempty"`
+// Result holds deduplicated vulnerability scan results.
+type Result struct {
+	Vulnerabilities []Vulnerability
+}
+
+// Vulnerability represents a unique vulnerability (CVE + package).
+// Each vulnerability appears once, with Targets tracking where it was found.
+type Vulnerability struct {
+	ID               string
+	PkgName          string
+	InstalledVersion string
+	FixedVersion     string
+	Severity         *Severity
+	Title            string
+	PURL             string
+	// Targets maps component name to the platforms where this vulnerability was found.
+	// e.g., {"Node.js": [ARM64, AMD64], "alpine:3.19": [AMD64]}
+	Targets map[string][]*platform.Platform
 }
 
 // Severity represents vulnerability severity.
@@ -115,6 +55,22 @@ var (
 	SeverityCritical = &Severity{trivy.Critical}
 )
 
+// ParseSeverity converts a severity string to a Severity pointer.
+func ParseSeverity(s string) *Severity {
+	switch s {
+	case trivy.Critical:
+		return SeverityCritical
+	case trivy.High:
+		return SeverityHigh
+	case trivy.Medium:
+		return SeverityMedium
+	case trivy.Low:
+		return SeverityLow
+	default:
+		return SeverityUnknown
+	}
+}
+
 // String returns the string representation of the severity.
 func (s *Severity) String() string {
 	return s.value
@@ -132,7 +88,7 @@ func (s *Severity) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &str); err != nil {
 		return fmt.Errorf(
 			"%w: %w %q (valid: UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL)",
-			ErrArgumentInvalidSeverity,
+			fault.ErrInvalidArgument,
 			err,
 			str,
 		)
@@ -144,7 +100,7 @@ func (s *Severity) UnmarshalJSON(data []byte) error {
 		normalized != SeverityMedium.value &&
 		normalized != SeverityHigh.value &&
 		normalized != SeverityCritical.value {
-		return fmt.Errorf("%w: %q (valid: UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL)", ErrArgumentInvalidSeverity, str)
+		return fmt.Errorf("%w: %q (valid: UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL)", fault.ErrInvalidArgument, str)
 	}
 
 	s.value = normalized

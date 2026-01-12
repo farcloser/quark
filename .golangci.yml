@@ -288,9 +288,19 @@ linters:
             - golang.org/x/crypto/scrypt
             # Secrets
             - filippo.io/age
+            - github.com/hashicorp/vault
             # Logger adapter
             - github.com/samber/slog-zerolog/v2
             - github.com/rs/zerolog
+            # Graph visualization
+            - github.com/dominikbraun/graph
+            # Syft SBOM generation
+            - github.com/anchore/syft
+            - github.com/anchore/stereoscope
+            - github.com/CycloneDX/cyclonedx-go
+            # Dockle config analysis
+            - github.com/goodwithtech/dockle
+            - github.com/goodwithtech/deckoder
         no-main-leak:
           files:
             - $all
@@ -303,7 +313,9 @@ linters:
           files:
             - $all
             - "!**/internal/registry/**"
+            - "!**/internal/registry2/**"
             - "!**/internal/sigstore/**"
+            - "!**/internal/syft/**"
           deny:
             - pkg: github.com/google/go-containerregistry
         no-sigstore-leak:
@@ -326,6 +338,8 @@ linters:
           files:
             - $all
             - "!**/internal/reference/**"
+            - "!**/internal/registry/**"
+            - "!**/internal/registry2/**"
           deny:
             - pkg: github.com/distribution/reference
             - pkg: github.com/opencontainers/go-digest
@@ -340,24 +354,53 @@ linters:
         no-crypto-leak:
           files:
             - $all
-            - "!**/kit/trust/**"
+            - "!**/dev/trust/**"
           deny:
             - pkg: golang.org/x/crypto/nacl/secretbox
             - pkg: golang.org/x/crypto/scrypt
         no-age-leak:
           files:
             - $all
-            - "!**/kit/secrets/**"
+            - "!**/internal/secrets/**"
+            - "!**/testutils/**"
           deny:
             - pkg: filippo.io/age
+            - pkg: github.com/hashicorp/vault
         no-zerolog-leak:
           files:
             - $all
-            - "!**/kit/logger/**"
+            - "!**/kit/defaults/logger.go"
             - "!**/cmd/quark/**"
           deny:
-            - pkg: github.com/samber/slog-zerolog/v2
             - pkg: github.com/rs/zerolog
+        no-zerolog-slog-leak:
+          files:
+            - $all
+            - "!**/kit/defaults/logger.go"
+          deny:
+            - pkg: github.com/samber/slog-zerolog/v2
+        no-graph-leak:
+          files:
+            - $all
+            - "!**/sdk/plan.go"
+          deny:
+            - pkg: github.com/dominikbraun/graph
+        no-syft-leak:
+          files:
+            - $all
+            - "!**/internal/syft/**"
+          deny:
+            - pkg: github.com/anchore/syft
+            - pkg: github.com/anchore/stereoscope
+            - pkg: github.com/CycloneDX/cyclonedx-go
+        no-dockle-leak:
+          files:
+            - $all
+            - "!**/internal/analyze/config/**"
+            - "!**/internal/analyze/layers/**"
+          deny:
+            - pkg: github.com/goodwithtech/dockle
+            - pkg: github.com/goodwithtech/deckoder
 
     gomoddirectives:
       # Allow replace for go-containerregistry (HTTPS patch for .local domains)

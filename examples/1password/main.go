@@ -2,7 +2,7 @@
 //
 // This example shows how to:
 // - Retrieve registry credentials from 1Password
-// - Authenticate with container registries using those credentials
+// - AddSecretsBackend with container registries using those credentials
 // - Handle authentication errors properly
 // - Use 1Password in both local development and CI/CD
 package main
@@ -13,7 +13,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/farcloser/quark/kit/secrets"
+	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/internal/secrets"
+	"github.com/farcloser/quark/kit"
 	"github.com/farcloser/quark/sdk"
 )
 
@@ -76,7 +78,7 @@ func main() {
 	// OPTIONAL: Pre-authenticate with 1Password to avoid multiple biometric prompts
 	// This is useful if you'll make multiple Get calls in parallel
 	// In CI/CD with service accounts, this is a no-op (already authenticated via token)
-	if err := secrets.AuthenticateOp(ctx); err != nil {
+	if err := kit.AddSecretsBackend(ctx, &secrets.OnePasswordConfig{}); err != nil {
 		slog.Error("failed to authenticate with 1Password", "error", err)
 		os.Exit(1)
 	}
@@ -86,7 +88,7 @@ func main() {
 	// Retrieve credentials from 1Password
 	// Reference format: op://vault/item
 	// This retrieves multiple fields in a single API call (efficient)
-	credentials, err := secrets.Get(
+	credentials, err := kit.GetSecret(
 		ctx,
 		"op://Homecore/docker.ro",
 		[]string{"username", "token"},
@@ -95,16 +97,14 @@ func main() {
 	if err != nil {
 		// Check for common error types to provide helpful messages
 		switch {
-		case errors.Is(err, secrets.ErrReferenceInvalidFormat):
-			slog.Error("invalid 1Password reference format (must start with 'op://')", "error", err)
-		case errors.Is(err, secrets.ErrFieldNotFound):
+		case errors.Is(err, fault.ErrInvalidArgument):
+			slog.Error("invalid 1Password reference format (must start with 'op://' and be non empty)", "error", err)
+		case errors.Is(err, fault.ErrNotFound):
 			slog.Error(
 				"required field not found in 1Password item (ensure 'username' and 'token' fields exist)",
 				"error",
 				err,
 			)
-		case errors.Is(err, secrets.ErrReferenceEmpty):
-			slog.Error("1Password reference cannot be empty", "error", err)
 		default:
 			// Generic error - likely authentication issue or item not found
 			slog.Error("failed to retrieve credentials from 1Password (check authentication and item exists)",
@@ -160,7 +160,7 @@ func main() {
 	//       os.Exit(1)
 	//   }
 
-	// Add the image to the plan (validates it)
+	// Add the image to the plan (validates registry connection)
 	plan.Add(image)
 
 	// Execute plan - this will validate the registry connection

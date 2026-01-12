@@ -6,24 +6,29 @@ import (
 	"log/slog"
 
 	"github.com/farcloser/quark/dev/resource"
-	"github.com/farcloser/quark/internal/registry"
-	"github.com/farcloser/quark/internal/sigstore"
+	"github.com/farcloser/quark/internal/a_deprecated/registry"
+	"github.com/farcloser/quark/internal/a_deprecated/sigstore"
 	"github.com/farcloser/quark/sdk/sign"
 )
 
 type signAction struct {
-	resource.BaseResource[signAction]
+	*resource.BaseAction
 
-	log    *slog.Logger
 	opts   *sign.Options
-	image  *Image
+	output *Image
 	signer *Signer
 }
 
+func (sa *signAction) AddOutput(name string, out resource.Resource, copyFrom ...resource.Resource) resource.Resource {
+	return resource.RegisterOutput(sa, sa.BaseAction, name, out, copyFrom...)
+}
+
 func (sa *signAction) Execute(ctx context.Context) error {
+	output := sa.output
+
 	// Sign requires digest for deterministic signing
-	if sa.image.ref.Digest == "" {
-		return fmt.Errorf("%w: %s", sign.ErrArgumentRequiredImageDigest, sa.image.ref.String())
+	if output.ref.Digest == "" {
+		return fmt.Errorf("%w: %s", sign.ErrArgumentRequiredImageDigest, output.ref.String())
 	}
 
 	// Signer is required
@@ -36,29 +41,29 @@ func (sa *signAction) Execute(ctx context.Context) error {
 	}
 
 	// Create registry client for pushing the signature
-	regClient := registry.NewClient(sa.image.registry.credentials(), sa.log)
+	regClient := registry.NewClient(output.registry.credentials(), output.log)
 
 	// Build sigstore sign options
 	signOpts := &sigstore.SignOptions{
-		ImageRef:                 *sa.image.ref,
-		Digest:                   sa.image.ref.Digest.String(),
-		OIDCIssuer:               sa.signer.opts.OIDCIssuer,
-		OIDCToken:                sa.signer.opts.OIDCToken,
-		PrivateKey:               sa.signer.opts.PrivateKey,
-		KeyPassword:              string(sa.signer.opts.KeyPassword),
+		ImageRef:                 *output.ref,
+		Digest:                   output.ref.Digest.String(),
+		OIDCIssuer:               sa.signer.options.OIDCIssuer,
+		OIDCToken:                sa.signer.options.OIDCToken,
+		PrivateKey:               sa.signer.options.PrivateKey,
+		KeyPassword:              string(sa.signer.options.KeyPassword),
 		PublishToTransparencyLog: !sa.opts.DisableTransparencyLog,
 		Annotations:              sa.opts.Annotations,
 		RegistryClient:           regClient,
-		Log:                      sa.log,
+		Log:                      output.log,
 	}
 
 	if err := sigstore.Sign(ctx, signOpts); err != nil {
 		return fmt.Errorf("%w: %w", sign.ErrSigningFailed, err)
 	}
 
-	sa.log.InfoContext(ctx, "image signed successfully",
-		slog.String("image", sa.image.ref.String()),
-		slog.Bool("keyless", sa.signer.opts.OIDCToken != ""),
+	output.log.InfoContext(ctx, "image signed successfully",
+		slog.String("image", output.ref.String()),
+		slog.Bool("keyless", sa.signer.options.OIDCToken != ""),
 		slog.Bool("tlog", !sa.opts.DisableTransparencyLog))
 
 	return nil

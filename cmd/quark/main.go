@@ -14,9 +14,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/farcloser/quark/dev/filesystem"
-	"github.com/farcloser/quark/kit/logger"
-	"github.com/farcloser/quark/kit/network"
-	"github.com/farcloser/quark/kit/trust"
+	"github.com/farcloser/quark/dev/trust"
+	"github.com/farcloser/quark/dev/version"
+	"github.com/farcloser/quark/kit/defaults"
 )
 
 var (
@@ -26,15 +26,13 @@ var (
 
 func main() {
 	ctx := context.Background()
-	// SetDefaults zerolog with LOG_LEVEL env var support
-	logger.SetDefaults(ctx)
-	// SetDefaults http transport before doing anything else
-	network.SetDefaults()
+	// SetDefaultsForLogger zerolog with LOG_LEVEL env var support
+	defaults.SetDefaultsForLogger(ctx)
 
 	cmd := &cli.Command{
-		Name:    "quark",
+		Name:    version.Name,
 		Usage:   "Container image management tool",
-		Version: "0.1.0",
+		Version: version.Version,
 		Commands: []*cli.Command{
 			{
 				Name:  "execute",
@@ -51,8 +49,25 @@ func main() {
 						Usage:   "Simulate execution without making changes",
 						Aliases: []string{"n"},
 					},
+					&cli.StringFlag{
+						Name:  "trace",
+						Usage: "Generate execution trace waterfall as DOT file at specified path",
+					},
 				},
 				Action: executeCommand,
+			},
+			{
+				Name:  "debug",
+				Usage: "Export plan dependency graph as DOT format (pipe to: | dot -Tsvg > graph.svg)",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "plan",
+						Aliases:  []string{"p"},
+						Usage:    "Path to plan file",
+						Required: true,
+					},
+				},
+				Action: debugCommand,
 			},
 			{
 				Name:  "generate-key-pair",
@@ -78,6 +93,7 @@ func main() {
 func executeCommand(ctx context.Context, cmd *cli.Command) error {
 	planPath := cmd.String("plan")
 	dryRun := cmd.Bool("dry-run")
+	tracePath := cmd.String("trace")
 
 	// Determine if planPath is a directory or file
 	stat, err := os.Stat(planPath)
@@ -107,6 +123,12 @@ func executeCommand(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
+	if tracePath != "" {
+		if err := os.Setenv("QUARK_TRACE", tracePath); err != nil {
+			return fmt.Errorf("failed to set QUARK_TRACE env: %w", err)
+		}
+	}
+
 	// #nosec G204 -- args constructed from validated plan path, executing go run is intentional
 	execCmd := exec.CommandContext(ctx, "go", args...)
 	execCmd.Stdout = os.Stdout
@@ -118,6 +140,47 @@ func executeCommand(ctx context.Context, cmd *cli.Command) error {
 
 	if err := execCmd.Run(); err != nil {
 		return fmt.Errorf("plan execution failed: %w", err)
+	}
+
+	return nil
+}
+
+func debugCommand(ctx context.Context, cmd *cli.Command) error {
+	planPath := cmd.String("plan")
+
+	// Determine if planPath is a directory or file
+	stat, err := os.Stat(planPath)
+	if err != nil {
+		return fmt.Errorf("%w: %s", errPlanFileNotFound, planPath)
+	}
+
+	var (
+		planDir string
+		args    []string
+	)
+
+	if stat.IsDir() {
+		planDir = planPath
+		args = []string{"run", "."}
+	} else {
+		planDir = filepath.Dir(planPath)
+		args = []string{"run", filepath.Base(planPath)}
+	}
+
+	// Set env var to trigger DOT export instead of execution
+	if err := os.Setenv("QUARK_DEBUG_GRAPH", "true"); err != nil {
+		return fmt.Errorf("failed to set debug env: %w", err)
+	}
+
+	// #nosec G204 -- args constructed from validated plan path
+	execCmd := exec.CommandContext(ctx, "go", args...)
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
+	execCmd.Env = os.Environ()
+	execCmd.Dir = planDir
+
+	if err := execCmd.Run(); err != nil {
+		return fmt.Errorf("debug export failed: %w", err)
 	}
 
 	return nil
@@ -156,10 +219,7 @@ func generateKeyPairCommand(_ context.Context, cmd *cli.Command) error {
 	}
 
 	// Generate key pair.
-	keyPair, err := trust.GenerateKeyPair(password)
-	if err != nil {
-		return fmt.Errorf("failed to generate key pair: %w", err)
-	}
+	keyPair := trust.GenerateKeyPair(password)
 
 	// Write private key.
 	if err := os.WriteFile(privateKeyPath, keyPair.PrivateKey, filesystem.FilePermissionsPrivate); err != nil {

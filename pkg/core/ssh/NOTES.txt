@@ -1,0 +1,156 @@
+OpenSSH IdentityFile & IdentitiesOnly Behavior
+
+Default Identity Files
+
+~/.ssh/id_rsa
+~/.ssh/id_ecdsa
+~/.ssh/id_ecdsa_sk
+~/.ssh/id_ed25519
+~/.ssh/id_ed25519_sk
+
+These are ALWAYS tried when IdentitiesOnly=no, regardless of whether IdentityFile is specified.
+
+Key Ordering (Most Critical Information)
+
+From pubkey_prepare() in OpenSSH sshconnect2.c (verbatim comment):
+
+  /*
+   * try keys in the following order:
+   *   1. certificates listed in the config file
+   *   2. other input certificates
+   *   3. agent keys that are found in the config file
+   *   4. other agent keys
+   *   5. keys that are only listed in the config file
+   */
+
+CRITICAL: "config file" here means options.identity_files which includes:
+- Command line -i keys
+- Config IdentityFile directives
+- Default identity files (~/.ssh/id_*) UNLESS IdentitiesOnly=yes
+
+Without IdentitiesOnly (default behavior):
+
+| Priority | Source                                      | Notes                                                    |
+|----------|---------------------------------------------|----------------------------------------------------------|
+| 1st      | Certificates from config                    | User certificates listed in config                       |
+| 2nd      | Agent keys matching any identity file       | IN AGENT LOAD ORDER, not -i/config order                 |
+| 3rd      | Other agent keys                            | Agent keys not in config, in agent load order            |
+| 4th      | Remaining identity files (not in agent)     | -i, IdentityFile, AND defaults - from disk               |
+
+With IdentitiesOnly=yes:
+
+| Priority | Source                                      | Notes                                                    |
+|----------|---------------------------------------------|----------------------------------------------------------|
+| 1st      | Certificates from config                    | User certificates listed in config                       |
+| 2nd      | Agent keys matching configured identities   | IN AGENT LOAD ORDER (only keys in -i or IdentityFile)    |
+| 3rd      | Configured identity files (not in agent)    | -i and IdentityFile only - from disk                     |
+| —        | Other agent keys                            | IGNORED (code: `if (!found && !options.identities_only)`) |
+| —        | Default identity files                      | IGNORED (not added to options.identity_files)            |
+
+Complete Scenario Matrix
+
+Note: Agent keys are tried IN AGENT LOAD ORDER, not in -i/config order.
+
+| Scenario                                 | IdentitiesOnly | Keys Tried                                                      | Behavior                            |
+|------------------------------------------|----------------|-----------------------------------------------------------------|-------------------------------------|
+| No config, no -i, agent running          | no (default)   | Agent matching defaults → other agent → defaults from disk      | Tries everything                    |
+| No config, no -i, no agent               | no             | Default files only                                              | ~/.ssh/id_*                         |
+| -i keyA only                             | no             | Agent's keyA → other agent → keyA disk → defaults disk          | Agent load order, not -i order      |
+| -i keyA only                             | yes            | Agent's keyA → keyA from disk                                   | Only keyA, agent version preferred  |
+| -i keyA -i keyB                          | no             | Agent matching (load order) → other agent → remaining disk      | Agent load order determines A vs B  |
+| -i keyA -i keyB                          | yes            | Agent matching (load order) → remaining from disk               | Only these two keys                 |
+| Config: IdentityFile keyC                | no             | Agent's keyC → other agent → keyC disk → defaults disk          | keyC added to identity files        |
+| Config: IdentityFile keyC                | yes            | Agent's keyC → keyC from disk                                   | ONLY keyC                           |
+| Multiple Host sections with IdentityFile | no             | Agent matching → other agent → remaining disk (incl defaults)   | All IdentityFiles cumulative        |
+| Multiple Host sections with IdentityFile | yes            | Agent matching config → disk keys not in agent                  | Filtered to configured only         |
+| -i keyA + Config IdentityFile keyB       | no             | Agent matching → other agent → remaining disk → defaults        | Both in identity_files              |
+| -i keyA + Config IdentityFile keyB       | yes            | Agent matching → remaining from disk                            | Only these two                      |
+| IdentityFile none                        | —              | No identity files loaded                                        | Disables pubkey auth                |
+
+Error Conditions
+
+| Condition                          | Behavior                                                           | Continues Auth?           |
+|------------------------------------|--------------------------------------------------------------------|---------------------------|
+| File not found                     | Warning: "Identity file not accessible: No such file or directory" | YES - tries next key      |
+| Permission denied on file          | Warning logged                                                     | YES - tries next key      |
+| Invalid key format                 | Warning: "load key ... invalid format"                             | YES - tries next key      |
+| Passphrase-protected, not in agent | Prompts for passphrase                                             | YES if correct passphrase |
+| Passphrase-protected, in agent     | Uses agent (no prompt)                                             | YES                       |
+| All keys rejected                  | Auth failure                                                       | NO - fails                |
+| MaxAuthTries exceeded (default: 6) | "Too many authentication failures"                                 | NO - connection dropped   |
+
+IdentityFile Cumulative Behavior
+
+Critical: Multiple IdentityFile directives ADD to the list (unlike most ssh_config options which override):
+
+Host *
+IdentityFile ~/.ssh/global_key
+
+Host github.com
+IdentityFile ~/.ssh/github_key
+
+For github.com: Both global_key AND github_key are in identity_files (global first, then specific).
+BUT: If both are in agent, AGENT LOAD ORDER determines which is tried first, not config order.
+
+Host Section Ordering
+
+Config is processed first match wins for most options, but IdentityFile is cumulative:
+
+Host dev-*
+IdentityFile ~/.ssh/dev_key
+
+Host dev-server
+IdentityFile ~/.ssh/specific_key
+
+Host *
+IdentityFile ~/.ssh/default_key
+
+For dev-server: All three in identity_files (dev_key, specific_key, default_key in config order).
+ACTUAL TRY ORDER: Agent keys matching these (in agent load order) → remaining from disk (in config order).
+
+Passphrase-Protected Keys
+
+| Key Location | Passphrase in Agent? | Behavior                      |
+|--------------|----------------------|-------------------------------|
+| Agent only   | Yes (by definition)  | No prompt, uses agent         |
+| Disk + Agent | Yes                  | No prompt, uses agent version |
+| Disk only    | N/A                  | Prompts for passphrase        |
+| Disk + Agent | No (different key)   | Uses disk, prompts            |
+
+Public Key File Trick
+
+You can specify a .pub file as IdentityFile to use the corresponding private key from agent:
+
+Host server
+IdentityFile ~/.ssh/my_key.pub
+IdentitiesOnly yes
+
+This filters agent to use only my_key without needing the private key on disk.
+
+Summary Decision Tree (from OpenSSH source)
+
+Is IdentitiesOnly=yes?
+├── NO (default):
+│   identity_files = -i keys + IdentityFile keys + default keys
+│   1. Certs from config
+│   2. Agent keys found in identity_files → IN AGENT LOAD ORDER
+│   3. Other agent keys → in agent load order
+│   4. Remaining identity_files not in agent → from disk
+└── YES:
+    identity_files = -i keys + IdentityFile keys (NO defaults)
+    1. Certs from config
+    2. Agent keys found in identity_files → IN AGENT LOAD ORDER
+    3. Remaining identity_files not in agent → from disk
+    (Other agent keys SKIPPED: `if (!found && !options.identities_only)`)
+
+---
+Sources:
+- https://man.openbsd.org/ssh_config
+- https://man.openbsd.org/ssh
+- https://man7.org/linux/man-pages/man5/ssh_config.5.html
+- https://github.com/openssh/openssh-portable/blob/master/sshconnect2.c (pubkey_prepare function)
+- https://bugs.launchpad.net/ubuntu/+source/openssh/+bug/1872145 (key ordering bug report)
+- https://www.zacbrown.org/posts/2021-04-06-ssh-agent-puzzles.html
+- https://smallstep.com/blog/ssh-agent-explained/
+- https://docs.github.com/en/authentication/connecting-to-github-with-ssh/working-with-ssh-key-passphrases
+- https://www.cyberciti.biz/faq/force-ssh-client-to-use-given-private-key-identity-file/

@@ -1,4 +1,4 @@
-// Package main demonstrates syncing container images between registries.
+// Package main demonstrates copying container images between registries.
 package main
 
 import (
@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/farcloser/quark/kit/env"
+	"github.com/farcloser/quark/kit"
 	"github.com/farcloser/quark/sdk"
 	"github.com/farcloser/quark/sdk/platform"
 	"github.com/farcloser/quark/sdk/sync"
@@ -19,13 +19,13 @@ func main() {
 
 	// Configure destination registry credentials
 	// Note: Replace with your actual registry credentials
-	username, err := env.Get("DOCKER_USERNAME")
+	username, err := kit.GetEnv("DOCKER_USERNAME")
 	if err != nil {
 		slog.Error("failed to get DOCKER_USERNAME", "error", err)
 		os.Exit(1)
 	}
 
-	password, err := env.Get("DOCKER_PASSWORD")
+	password, err := kit.GetEnv("DOCKER_PASSWORD")
 	if err != nil {
 		slog.Error("failed to get DOCKER_PASSWORD", "error", err)
 		os.Exit(1)
@@ -38,7 +38,7 @@ func main() {
 		Token:    password,
 	})
 
-	// Define source image to sync
+	// Define source image to copy
 	sourceImage := dockerHub.NewImage(sdk.ImageOpts{
 		Name:    "alpine",
 		Version: "3.19",
@@ -52,20 +52,20 @@ func main() {
 		Version: "3.19",
 	})
 
-	// Sync image from source to destination registry
+	// Copy image from source to destination registry
 	// Includes both AMD64 and ARM64 platforms
-	syncedImage := sourceImage.SyncTo(destImage, &sync.Options{
-		Platforms: []platform.Platform{platform.AMD64, platform.ARM64},
+	copiedImage := sourceImage.CopyTo(destImage, &sync.Options{
+		Platforms: []*platform.Platform{platform.AMD64, platform.ARM64},
 	})
 
-	// Add synced image to plan - dependencies are auto-discovered
-	plan.Add(syncedImage)
+	// Add copied image to plan - dependencies are auto-discovered
+	plan.Add(copiedImage)
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {
-		slog.Error("sync failed", "error", err)
+		slog.Error("copy failed", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("sync completed successfully")
+	slog.Info("copy completed successfully")
 }
