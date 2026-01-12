@@ -1,4 +1,3 @@
-//revive:disable:add-constant
 //revive:disable:function-length
 
 package reference_test
@@ -7,10 +6,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/opencontainers/go-digest"
 	"gotest.tools/v3/assert"
 
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/internal/types"
 )
 
 func TestReference(t *testing.T) {
@@ -23,7 +22,7 @@ func TestReference(t *testing.T) {
 		FamiliarName  string
 		FamiliarMatch map[string]bool
 		Protocol      reference.Protocol
-		Digest        digest.Digest
+		Digest        types.Digest
 		Path          string
 		Domain        string
 		Tag           string

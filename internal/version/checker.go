@@ -1,34 +1,50 @@
-// Package version provides OCI registry version checking.
 package version
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/rs/zerolog"
+	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/internal/a_deprecated/registry"
+	"github.com/farcloser/quark/internal/reference"
 )
 
-var errNoValidVersionsFound = errors.New("no valid versions found")
+//nolint:gochecknoglobals
+var (
+	// versionRegex extracts prefix, version, suffix from a tag.
+	// Group 1: optional prefix (non-version chars ending with . or -)
+	// Group 2: version (digits, dots, hyphens)
+	// Group 3: optional suffix (everything else).
+	versionRegex = regexp.MustCompile(`^([^0-9.-]*[.-])?v?([0-9.-]+)(.*)$`)
+
+	// excludePatterns filters out development/test versions.
+	excludePatterns = []string{
+		"nightly", "dev", "beta", "alpha", "rc", "test", "snapshot", "builder",
+	}
+)
+
+// versionParts holds the parsed components of a version tag.
+type versionParts struct {
+	Prefix  string
+	Version string
+	Suffix  string
+}
 
 // Checker checks for image version updates from OCI registries.
 type Checker struct {
-	username string
-	password string
-	log      zerolog.Logger
+	client *registry.Client
+	log    *slog.Logger
 }
 
-// NewChecker creates a new version checker with optional authentication.
-func NewChecker(username, password string, log zerolog.Logger) *Checker {
+// NewChecker creates a new version checker using the provided registry client.
+func NewChecker(client *registry.Client, log *slog.Logger) *Checker {
 	return &Checker{
-		username: username,
-		password: password,
-		log:      log,
+		client: client,
+		log:    log,
 	}
 }
 
@@ -41,47 +57,46 @@ type Info struct {
 }
 
 // CheckVersion checks any OCI registry for the latest version of an image.
-// imageRef: full image reference (e.g., "timberio/vector", "docker.io/caddy", "ghcr.io/org/image")
-// currentVersion: current version tag (e.g., "2.10.2-distroless-static" or "1.2.3")
-// variant: optional variant suffix (e.g., "alpine", "distroless-static").
-//
-//	If empty, variant will be automatically extracted from currentVersion.
-func (checker *Checker) CheckVersion(imageRef, currentVersion, variant string) (*Info, error) {
-	// Auto-extract variant from currentVersion if not explicitly provided
-	if variant == "" {
-		_, extractedVariant := extractVariant(currentVersion)
-		variant = extractedVariant
+// imageRef: parsed image reference (must include a tag).
+// Filter is auto-detected from current tag: suffix if present, otherwise prefix.
+func (checker *Checker) CheckVersion(ctx context.Context, imageRef reference.ImageReference) (*Info, error) {
+	currentTag := imageRef.Tag
+
+	// Require a tag for version checking
+	if currentTag == "" {
+		return nil, fmt.Errorf("%w: %s", fault.ErrInvalidArgument, imageRef.String())
 	}
 
-	checker.log.Debug().
-		Str("image", imageRef).
-		Str("current", currentVersion).
-		Str("variant", variant).
-		Msg("checking registry for updates")
+	currentParts := parseVersion(currentTag)
 
-	// Parse repository reference
-	repo, err := name.NewRepository(imageRef)
+	// Auto-detect filter: use suffix if present, otherwise use prefix
+	filter := currentParts.Suffix
+	if filter == "" {
+		filter = currentParts.Prefix
+	}
+
+	checker.log.DebugContext(ctx, "checking registry for updates", //revive:disable-line:add-constant
+		"image", imageRef.String(),
+		"current", currentTag,
+		"filter", filter)
+
+	// List all tags from registry using the registry client
+	tags, err := checker.client.ListTags(ctx, imageRef)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse repository: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnableToListTags, err)
 	}
 
-	// List all tags from registry
-	tags, err := remote.List(repo, checker.remoteOptions()...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list tags: %w", err)
-	}
-
-	// Filter versions
+	// Filter and collect valid versions
 	var versions []string
 
 	for _, tag := range tags {
-		if isValidVersion(tag, variant) {
+		if isValidVersion(tag, filter) {
 			versions = append(versions, tag)
 		}
 	}
 
 	if len(versions) == 0 {
-		return nil, fmt.Errorf("%w: %s", errNoValidVersionsFound, imageRef)
+		return nil, fmt.Errorf("%w: %s", ErrNoValidVersionsFound, imageRef.String())
 	}
 
 	// Sort versions semantically
@@ -89,114 +104,100 @@ func (checker *Checker) CheckVersion(imageRef, currentVersion, variant string) (
 		return compareVersions(versions[i], versions[j]) < 0
 	})
 
-	// Only fetch digest for the latest version (not all versions)
+	// Only fetch digest for the latest version
 	latestVersion := versions[len(versions)-1]
 
-	latestTagRef, err := name.ParseReference(fmt.Sprintf("%s:%s", imageRef, latestVersion))
+	// Construct the latest tag reference string and parse to ImageReference
+	latestTagStr := fmt.Sprintf("%s:%s", imageRef.Name(), latestVersion)
+
+	latestImageRef, err := reference.Parse(latestTagStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse latest version reference: %w", err)
+		return nil, fmt.Errorf("%w: failed to parse latest tag: %w", fault.ErrInvalidArgument, err)
 	}
 
-	latestDesc, err := remote.Get(latestTagRef, checker.remoteOptions()...)
+	latestDigest, err := checker.client.GetDigest(ctx, *latestImageRef)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get latest version digest: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnableToGetDigest, err)
 	}
 
-	latestDigest := latestDesc.Digest.String()
-
-	info := &Info{
-		CurrentVersion:  currentVersion,
+	return &Info{
+		CurrentVersion:  currentTag,
 		LatestVersion:   latestVersion,
 		LatestDigest:    latestDigest,
-		UpdateAvailable: currentVersion != latestVersion,
-	}
-
-	if info.UpdateAvailable {
-		checker.log.Info().
-			Str("image", imageRef).
-			Str("current", currentVersion).
-			Str("latest", latestVersion).
-			Msg("update available")
-	} else {
-		checker.log.Debug().
-			Str("image", imageRef).
-			Str("version", currentVersion).
-			Msg("up to date")
-	}
-
-	return info, nil
+		UpdateAvailable: currentTag != latestVersion,
+	}, nil
 }
 
-// remoteOptions returns remote options with authentication if configured.
-func (checker *Checker) remoteOptions() []remote.Option {
-	if checker.username != "" && checker.password != "" {
-		auth := &authn.Basic{
-			Username: checker.username,
-			Password: checker.password,
-		}
-
-		return []remote.Option{remote.WithAuth(auth)}
+// parseVersion extracts prefix, version, and suffix from a tag.
+// Version component has hyphens replaced with dots for normalization.
+func parseVersion(tag string) versionParts {
+	matches := versionRegex.FindStringSubmatch(tag)
+	if matches == nil {
+		return versionParts{Version: tag}
 	}
 
-	return []remote.Option{}
+	clean := ".-"
+
+	version := strings.Trim(matches[2], clean)
+	version = strings.ReplaceAll(version, "-", ".")
+
+	return versionParts{
+		Prefix:  strings.Trim(matches[1], clean),
+		Version: version,
+		Suffix:  strings.Trim(matches[3], clean),
+	}
 }
 
-// isValidVersion checks if a tag is a valid semantic version.
-// It filters out development tags like "nightly", "beta", "rc", etc.
-// If variant is specified, only matches versions with that variant suffix.
-func isValidVersion(tag, variant string) bool {
-	// Exclude development/test versions
-	excludePatterns := []string{
-		"nightly", "dev", "beta", "alpha", "rc", "test", "snapshot", "builder",
-	}
+// isValidVersion checks if a tag matches the filter and isn't excluded.
+func isValidVersion(tag, filter string) bool {
 	lowerTag := strings.ToLower(tag)
 
+	// Exclude development/test versions
 	for _, pattern := range excludePatterns {
 		if strings.Contains(lowerTag, pattern) {
 			return false
 		}
 	}
 
-	if variant != "" {
-		// Match version with specific variant (e.g., "2.10.2-alpine")
-		pattern := fmt.Sprintf(`^v?[0-9]+\.[0-9]+[0-9.]*-%s$`, regexp.QuoteMeta(variant))
-		matched, _ := regexp.MatchString(pattern, tag)
+	// Parse the tag
+	parts := parseVersion(tag)
 
-		return matched
+	// Must have a version component
+	if parts.Version == "" {
+		return false
 	}
 
-	// Match plain version tags (e.g., "v2.9.13", "1.2.3")
-	matched, _ := regexp.MatchString(`^v?[0-9]+\.[0-9]+[0-9.]*$`, tag)
+	// If no filter, match tags with no prefix and no suffix
+	if filter == "" {
+		return parts.Prefix == "" && parts.Suffix == ""
+	}
 
-	return matched
+	// Match by suffix or prefix
+	return parts.Suffix == filter || parts.Prefix == filter
 }
 
-// compareVersions compares two semantic version strings.
-// Returns -1 if version1 < version2, 0 if version1 == version2, 1 if version1 > version2.
-func compareVersions(version1, version2 string) int {
-	// Strip 'v' prefix and variant suffix
-	version1 = stripVersionPrefix(version1)
-	version2 = stripVersionPrefix(version2)
+// compareVersions compares two version strings semantically.
+// Returns -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2.
+func compareVersions(tag1, tag2 string) int {
+	parts1 := parseVersion(tag1)
+	parts2 := parseVersion(tag2)
 
-	// Split on dots
-	parts1 := strings.Split(version1, ".")
-	parts2 := strings.Split(version2, ".")
+	// Split on dots (version is already normalized by parseVersion)
+	segments1 := strings.Split(parts1.Version, ".")
+	segments2 := strings.Split(parts2.Version, ".")
 
-	// Compare each part
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
+	// Compare each segment
+	maxLen := max(len(segments2), len(segments1))
 
 	for idx := range maxLen {
 		var num1, num2 int
 
-		if idx < len(parts1) {
-			_, _ = fmt.Sscanf(parts1[idx], "%d", &num1)
+		if idx < len(segments1) {
+			_, _ = fmt.Sscanf(segments1[idx], "%d", &num1)
 		}
 
-		if idx < len(parts2) {
-			_, _ = fmt.Sscanf(parts2[idx], "%d", &num2)
+		if idx < len(segments2) {
+			_, _ = fmt.Sscanf(segments2[idx], "%d", &num2)
 		}
 
 		if num1 < num2 {
@@ -209,51 +210,4 @@ func compareVersions(version1, version2 string) int {
 	}
 
 	return 0
-}
-
-// stripVersionPrefix removes the 'v' prefix and extracts just the numeric version.
-func stripVersionPrefix(version string) string {
-	// Remove 'v' prefix
-	version = strings.TrimPrefix(version, "v")
-
-	// Extract version before variant suffix (e.g., "2.10.2" from "2.10.2-alpine")
-	if idx := strings.Index(version, "-"); idx != -1 {
-		version = version[:idx]
-	}
-
-	return version
-}
-
-// extractVariant extracts the variant suffix from a version string.
-// Examples:
-//   - "0.50.0-distroless-static" → version="0.50.0", variant="distroless-static"
-//   - "2.9.13-alpine" → version="2.9.13", variant="alpine"
-//   - "1.2.3" → version="1.2.3", variant=""
-//   - "v1.2.3-alpine" → version="1.2.3", variant="alpine"
-func extractVariant(fullVersion string) (version, variant string) {
-	// Strip 'v' prefix first
-	fullVersion = strings.TrimPrefix(fullVersion, "v")
-
-	// Find first hyphen after version numbers
-	if version, variant, ok := strings.Cut(fullVersion, "-"); ok {
-		return version, variant
-	}
-
-	// No variant found
-	return fullVersion, ""
-}
-
-// GetDigest fetches the digest for an image reference from the registry.
-func (checker *Checker) GetDigest(imageRef string) (string, error) {
-	repo, err := name.ParseReference(imageRef)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse repository: %w", err)
-	}
-
-	desc, err := remote.Get(repo, checker.remoteOptions()...)
-	if err != nil {
-		return "", fmt.Errorf("failed to get image descriptor: %w", err)
-	}
-
-	return desc.Digest.String(), nil
 }

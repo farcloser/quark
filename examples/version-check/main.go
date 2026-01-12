@@ -3,51 +3,46 @@ package main
 
 import (
 	"context"
-
-	"github.com/rs/zerolog/log"
+	"log/slog"
+	"os"
 
 	"github.com/farcloser/quark/sdk"
-	"github.com/farcloser/quark/sdk/logger"
 )
 
 func main() {
 	ctx := context.Background()
-	logger.ConfigureWithDefaults(ctx)
 
-	plan := sdk.NewPlan("version-check-example")
+	plan := sdk.NewPlan()
+
+	// Configure Docker Hub registry (public access, no credentials needed for pulls)
+	dockerHub := sdk.NewRegistry(sdk.RegistryOpts{
+		Domain: "docker.io",
+	})
 
 	// Define images to check for updates
-	alpineImage, err := sdk.NewImage(&sdk.ImageOpts{
+	alpineImage := dockerHub.NewImage(sdk.ImageOpts{
 		Name:    "alpine",
-		Domain:  "docker.io",
 		Version: "3.19",
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create alpine image")
-	}
 
-	nginxImage, err := sdk.NewImage(&sdk.ImageOpts{
+	nginxImage := dockerHub.NewImage(sdk.ImageOpts{
 		Name:    "nginx",
-		Domain:  "docker.io",
 		Version: "1.25",
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create nginx image")
-	}
 
 	// Check if newer versions are available
-	if _, err := plan.CheckVersion("alpine-version", alpineImage, false); err != nil {
-		log.Fatal().Err(err).Msg("failed to create alpine version check")
-	}
+	// Update() returns a new image representing the post-update state
+	updatedAlpine := alpineImage.Update(nil)
+	updatedNginx := nginxImage.Update(nil)
 
-	if _, err := plan.CheckVersion("nginx-version", nginxImage, false); err != nil {
-		log.Fatal().Err(err).Msg("failed to create nginx version check")
-	}
+	// Add updated images to plan - dependencies are auto-discovered
+	plan.Add(updatedAlpine, updatedNginx)
 
 	// Execute plan
 	if err := plan.Execute(ctx); err != nil {
-		log.Fatal().Err(err).Msg("version check failed")
+		slog.Error("version check failed", "error", err)
+		os.Exit(1)
 	}
 
-	log.Info().Msg("version check completed successfully")
+	slog.Info("version check completed successfully")
 }

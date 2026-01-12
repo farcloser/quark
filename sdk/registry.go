@@ -1,45 +1,84 @@
 package sdk
 
-// RegistryOpts contains configuration options for creating a registry.
-type RegistryOpts struct {
-	Domain   string // Required - registry domain (e.g., "ghcr.io", "docker.io")
-	Username string // Optional - registry username
-	Token    string // Optional - registry token or password
-}
+import (
+	"fmt"
+	"log/slog"
 
-// NewRegistry creates a new Registry from the provided arguments.
-// Empty domain is normalized to "docker.io" (Docker Hub default).
-func NewRegistry(args *RegistryOpts) *Registry {
-	domain := args.Domain
-	if domain == "" {
-		domain = "docker.io"
-	}
+	"github.com/farcloser/quark/dev/resource"
+	"github.com/farcloser/quark/internal/types"
+)
 
-	return &Registry{
-		domain:   domain,
-		username: args.Username,
-		token:    args.Token,
-	}
-}
-
-// Registry represents a container registry with authentication.
+// Registry represents a container registry with credentials.
 type Registry struct {
-	domain   string
-	username string
-	token    string
+	resource.Resource
+
+	options RegistryOpts
+	log     *slog.Logger
 }
 
-// Domain returns the registry domain.
-func (r *Registry) Domain() string {
-	return r.domain
+// RegistryOpts configures registry creation.
+type RegistryOpts struct {
+	// Moniker holds plan-defined metadata used purely for display
+	Moniker  string
+	Domain   string // registry domain (e.g., "ghcr.io", "docker.io")
+	Username string // registry username
+	Token    string // registry token or password
 }
 
-// Username returns the registry username.
-func (r *Registry) Username() string {
-	return r.username
+// NewRegistry creates a new Registry resource.
+func NewRegistry(opts RegistryOpts) *Registry {
+	if opts.Domain == "" {
+		opts.Domain = defaultRegistry
+	}
+
+	moniker := opts.Moniker
+	if moniker == "" {
+		moniker = opts.Domain
+	}
+
+	output := &Registry{
+		options: opts,
+		log:     slog.With(registryResourceName, moniker),
+	}
+
+	moniker = fmt.Sprintf("%s:%s", registryResourceName, moniker)
+
+	output.Resource = (&createRegistryAction{
+		BaseAction: resource.NewAction(fmt.Sprintf("%s:%s", actionCreateName, moniker)),
+		output:     output,
+	}).AddOutput(moniker, output)
+
+	return output
 }
 
-// Token returns the registry token or password.
-func (r *Registry) Token() string {
-	return r.token
+// NewImage creates a new Image resource associated with this registry.
+func (reg *Registry) NewImage(opts ImageOpts) *Image {
+	moniker := opts.Moniker
+	if moniker == "" {
+		moniker = fmt.Sprintf("%s:%s:%s:%s", imageResourceName, opts.Name, opts.Version, opts.Digest)
+	}
+
+	output := &Image{
+		options:  opts,
+		registry: reg,
+		log:      reg.log.With(imageResourceName, moniker),
+	}
+
+	moniker = fmt.Sprintf("%s:%s", imageResourceName, moniker)
+
+	output.Resource = (&createImageAction{
+		BaseAction: resource.NewAction(fmt.Sprintf("%s:%s", actionCreateName, moniker), reg),
+		output:     output,
+	}).AddOutput(moniker, output)
+
+	return output
+}
+
+// credentials returns the registry credentials.
+func (reg *Registry) credentials() *types.RegistryCredentials {
+	return &types.RegistryCredentials{
+		Domain:   reg.options.Domain,
+		Username: reg.options.Username,
+		Password: reg.options.Token,
+	}
 }

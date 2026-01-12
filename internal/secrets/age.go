@@ -6,18 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"filippo.io/age"
+
+	"github.com/farcloser/quark/dev/fault"
 )
 
 // AgeBackend implements secret resolution using age encryption.
-type AgeBackend struct{}
-
-// NewAgeBackend creates a new age backend.
-func NewAgeBackend() *AgeBackend {
-	return &AgeBackend{}
+type AgeBackend struct {
+	identities []age.Identity
 }
 
 // Scheme returns the URI scheme for age ("age").
@@ -36,24 +34,22 @@ func (*AgeBackend) Scheme() string {
 // Fields: list of field names to extract from the resolved JSON subtree.
 func (b *AgeBackend) Resolve(_ context.Context, path string, fields []string) (map[string]string, error) {
 	if path == "" {
-		return nil, ErrReferenceEmpty
+		return nil, fault.ErrInvalidArgument
 	}
 
 	if len(fields) == 0 {
-		return nil, ErrFieldsEmpty
+		return nil, fault.ErrNotFound
 	}
 
 	// Split on first .age to separate file path from JSON path
 	filePath, jsonPath := b.parseURI(path)
 
-	// Load identities
-	identities, err := b.loadIdentities()
-	if err != nil {
-		return nil, err
+	if len(b.identities) == 0 {
+		return nil, ErrIdentityNotSet
 	}
 
 	// Decrypt file
-	decrypted, err := b.decryptFile(filePath, identities)
+	decrypted, err := b.decryptFile(filePath, b.identities)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +57,7 @@ func (b *AgeBackend) Resolve(_ context.Context, path string, fields []string) (m
 	// Parse JSON
 	var data any
 	if err := json.Unmarshal(decrypted, &data); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidJSON, err)
+		return nil, fmt.Errorf("%w: %w", fault.ErrInvalidJSON, err)
 	}
 
 	// Navigate JSON path if provided
@@ -81,20 +77,18 @@ func (b *AgeBackend) Resolve(_ context.Context, path string, fields []string) (m
 // Returns the raw decrypted content without any JSON parsing.
 func (b *AgeBackend) ResolveDocument(_ context.Context, path string) ([]byte, error) {
 	if path == "" {
-		return nil, ErrReferenceEmpty
+		return nil, fault.ErrInvalidArgument
 	}
 
 	// For document retrieval, we just need the file path (no JSON navigation)
 	filePath, _ := b.parseURI(path)
 
-	// Load identities
-	identities, err := b.loadIdentities()
-	if err != nil {
-		return nil, err
+	if len(b.identities) == 0 {
+		return nil, ErrIdentityNotSet
 	}
 
 	// Decrypt and return raw content
-	return b.decryptFile(filePath, identities)
+	return b.decryptFile(filePath, b.identities)
 }
 
 // Example: "secrets/db.json.age/prod/credentials" -> ("secrets/db.json.age", "prod/credentials").
@@ -117,47 +111,6 @@ func (*AgeBackend) parseURI(uriPath string) (filePath, jsonPath string) {
 	return filePath, jsonPath
 }
 
-// loadIdentities loads age identities from HADRON_AGE_IDENTITY environment variable.
-func (*AgeBackend) loadIdentities() ([]age.Identity, error) {
-	identityPath := os.Getenv("HADRON_AGE_IDENTITY")
-	if identityPath == "" {
-		return nil, ErrIdentityNotSet
-	}
-
-	// Expand ~ to home directory
-	if strings.HasPrefix(identityPath, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
-		}
-
-		identityPath = filepath.Join(home, identityPath[2:])
-	}
-
-	//nolint:gosec // Path from environment variable, user-controlled
-	identityFile, err := os.Open(identityPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrIdentityNotFound, identityPath)
-		}
-
-		return nil, fmt.Errorf("failed to open identity file: %w", err)
-	}
-
-	defer func() { _ = identityFile.Close() }()
-
-	identities, err := age.ParseIdentities(identityFile)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrIdentityNotFound, err)
-	}
-
-	if len(identities) == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrIdentityNotFound, identityPath)
-	}
-
-	return identities, nil
-}
-
 // decryptFile decrypts an age-encrypted file.
 // Path is resolved relative to current working directory.
 func (*AgeBackend) decryptFile(filePath string, identities []age.Identity) ([]byte, error) {
@@ -165,10 +118,10 @@ func (*AgeBackend) decryptFile(filePath string, identities []age.Identity) ([]by
 	encryptedFile, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrFileNotFound, filePath)
+			return nil, fmt.Errorf("%w: %s", fault.ErrNotFound, filePath)
 		}
 
-		return nil, fmt.Errorf("failed to open encrypted file: %w", err)
+		return nil, fmt.Errorf("%w: %s: %w", fault.ErrFilesystemFailure, filePath, err)
 	}
 
 	defer func() { _ = encryptedFile.Close() }()
@@ -184,7 +137,7 @@ func (*AgeBackend) decryptFile(filePath string, identities []age.Identity) ([]by
 
 	decrypted, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read decrypted content: %w", err)
+		return nil, fmt.Errorf("%w: %w", fault.ErrReadFailure, err)
 	}
 
 	return decrypted, nil
@@ -204,12 +157,12 @@ func (*AgeBackend) navigateJSON(data any, path string) (any, error) {
 		// Navigate into the next level
 		m, ok := current.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("%w: path %q not found (not an object)", ErrFieldNotFound, path)
+			return nil, fmt.Errorf("%w: path %q not found (not an object)", fault.ErrNotFound, path)
 		}
 
 		next, found := m[part]
 		if !found {
-			return nil, fmt.Errorf("%w: key %q not found in path %q", ErrFieldNotFound, part, path)
+			return nil, fmt.Errorf("%w: key %q not found in path %q", fault.ErrNotFound, part, path)
 		}
 
 		current = next
@@ -225,17 +178,18 @@ func (*AgeBackend) extractFields(data any, fields []string) (map[string]string, 
 	// If data is a map, extract fields from it
 	dataMap, ok := data.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: resolved data is not an object", ErrFieldNotFound)
+		return nil, fmt.Errorf("%w: resolved data is not an object", fault.ErrNotFound)
 	}
 
 	for _, fieldName := range fields {
 		value, found := dataMap[fieldName]
 		if !found {
-			return nil, fmt.Errorf("%w: %q", ErrFieldNotFound, fieldName)
+			return nil, fmt.Errorf("%w: %q", fault.ErrNotFound, fieldName)
 		}
 
 		// Convert value to string
 		var strValue string
+
 		switch typedValue := value.(type) {
 		case string:
 			strValue = typedValue
@@ -243,7 +197,7 @@ func (*AgeBackend) extractFields(data any, fields []string) (map[string]string, 
 			// For complex types, marshal back to JSON
 			jsonBytes, err := json.Marshal(typedValue)
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal field %q: %w", fieldName, err)
+				return nil, fmt.Errorf("%w %q: %w", fault.ErrInvalidJSON, fieldName, err)
 			}
 
 			strValue = string(jsonBytes)

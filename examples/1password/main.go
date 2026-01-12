@@ -2,7 +2,7 @@
 //
 // This example shows how to:
 // - Retrieve registry credentials from 1Password
-// - Authenticate with container registries using those credentials
+// - AddSecretsBackend with container registries using those credentials
 // - Handle authentication errors properly
 // - Use 1Password in both local development and CI/CD
 package main
@@ -10,12 +10,13 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"os"
 
-	"github.com/rs/zerolog/log"
-
+	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/internal/secrets"
+	"github.com/farcloser/quark/kit"
 	"github.com/farcloser/quark/sdk"
-	"github.com/farcloser/quark/sdk/logger"
-	"github.com/farcloser/quark/sdk/secrets"
 )
 
 // Example demonstrates retrieving GHCR credentials from 1Password and using them
@@ -73,80 +74,69 @@ import (
 //	          ./your-app
 func main() {
 	ctx := context.Background()
-	logger.ConfigureWithDefaults(ctx)
 
 	// OPTIONAL: Pre-authenticate with 1Password to avoid multiple biometric prompts
 	// This is useful if you'll make multiple Get calls in parallel
 	// In CI/CD with service accounts, this is a no-op (already authenticated via token)
-	if err := secrets.AuthenticateOp(ctx); err != nil {
-		log.Fatal().Err(err).Msg("failed to authenticate with 1Password")
+	if err := kit.AddSecretsBackend(ctx, &secrets.OnePasswordConfig{}); err != nil {
+		slog.Error("failed to authenticate with 1Password", "error", err)
+		os.Exit(1)
 	}
 
-	log.Info().Msg("retrieving registry credentials from 1Password")
+	slog.Info("retrieving registry credentials from 1Password")
 
 	// Retrieve credentials from 1Password
 	// Reference format: op://vault/item
 	// This retrieves multiple fields in a single API call (efficient)
-	credentials, err := secrets.Get(
+	credentials, err := kit.GetSecret(
 		ctx,
-		"op://Security/ghcr-credentials",
-		[]string{"username", "password"},
+		"op://Homecore/docker.ro",
+		[]string{"username", "token"},
 	)
 	// Handle specific 1Password errors
 	if err != nil {
 		// Check for common error types to provide helpful messages
 		switch {
-		case errors.Is(err, sdk.ErrReferenceInvalidFormat):
-			log.Fatal().Err(err).Msg("invalid 1Password reference format (must start with 'op://')")
-		case errors.Is(err, sdk.ErrFieldNotFound):
-			log.Fatal().
-				Err(err).
-				Msg("required field not found in 1Password item (ensure 'username' and 'password' fields exist)")
-		case errors.Is(err, sdk.ErrReferenceEmpty):
-			log.Fatal().Err(err).Msg("1Password reference cannot be empty")
+		case errors.Is(err, fault.ErrInvalidArgument):
+			slog.Error("invalid 1Password reference format (must start with 'op://' and be non empty)", "error", err)
+		case errors.Is(err, fault.ErrNotFound):
+			slog.Error(
+				"required field not found in 1Password item (ensure 'username' and 'token' fields exist)",
+				"error",
+				err,
+			)
 		default:
 			// Generic error - likely authentication issue or item not found
-			log.Fatal().Err(err).
-				Str("reference", "op://Security/ghcr-credentials").
-				Msg("failed to retrieve credentials from 1Password (check authentication and item exists)")
+			slog.Error("failed to retrieve credentials from 1Password (check authentication and item exists)",
+				"reference", "op://Homecore/docker.ro", "error", err)
 		}
+
+		os.Exit(1)
 	}
 
 	username := credentials["username"]
-	password := credentials["password"]
+	password := credentials["token"]
 
-	log.Info().
-		Str("username", username).
-		Msg("successfully retrieved credentials from 1Password")
+	slog.Info("successfully retrieved credentials from 1Password", "username", username)
 
 	// Create a plan and configure registry with 1Password credentials
-	plan := sdk.NewPlan("1password-example")
+	plan := sdk.NewPlan()
 
 	// Configure GHCR (GitHub Container Registry) with credentials from 1Password
-	plan.AddRegistry(sdk.NewRegistry(&sdk.RegistryOpts{
+	ghcr := sdk.NewRegistry(sdk.RegistryOpts{
 		Domain:   "ghcr.io",
 		Username: username,
 		Token:    password,
-	}))
+	})
 
-	log.Info().
-		Str("registry", "ghcr.io").
-		Msg("registry configured with 1Password credentials")
+	slog.Info("registry configured with 1Password credentials", "registry", "ghcr.io")
 
 	// Example: Create an image reference that will use these credentials
 	// This demonstrates that the credentials are working
-	image, err := sdk.NewImage(&sdk.ImageOpts{
+	image := ghcr.NewImage(sdk.ImageOpts{
 		Name:    "my-org/my-app",
-		Domain:  "ghcr.io",
 		Version: "latest",
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create image reference")
-	}
-
-	log.Info().
-		Str("image", image.Domain()+"/"+image.Name()+":"+image.Version()).
-		Msg("created image reference using 1Password-authenticated registry")
 
 	// In a real application, you would now use this plan to perform operations
 	// such as sync, scan, build, etc. The registry authentication is already
@@ -155,19 +145,30 @@ func main() {
 	// Example operations you could add:
 	//
 	//   // Version check
-	//   plan.CheckVersion("check", image, false)
+	//   updatedImage := image.Update(nil)
+	//   plan.Add(updatedImage)
 	//
 	//   // Scan image for vulnerabilities
-	//   plan.Scan(&sdk.ScanArgs{
-	//       Description: "scan",
-	//       Source:      image,
+	//   scannedImage := image.Scan(&scan.Options{
+	//       SeverityChecks: scan.SetSeverityCheckRecommended,
 	//   })
+	//   plan.Add(scannedImage)
 	//
 	//   // Execute plan
 	//   if err := plan.Execute(ctx); err != nil {
-	//       log.Fatal().Err(err).Msg("plan execution failed")
+	//       slog.Error("plan execution failed", "error", err)
+	//       os.Exit(1)
 	//   }
 
-	log.Info().Msg("1Password integration example completed successfully")
-	log.Info().Msg("credentials retrieved and registry configured - ready for operations")
+	// Add the image to the plan (validates registry connection)
+	plan.Add(image)
+
+	// Execute plan - this will validate the registry connection
+	if err := plan.Execute(ctx); err != nil {
+		slog.Error("plan execution failed", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("1Password integration example completed successfully")
+	slog.Info("credentials retrieved and registry configured - ready for operations")
 }

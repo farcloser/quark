@@ -6,6 +6,8 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
+
+	"github.com/farcloser/quark/internal/types"
 )
 
 // Protocol represents the protocol used for the image reference.
@@ -16,7 +18,7 @@ const shortIDLength = 5
 // ImageReference represents a reference to an image, which may include a protocol, domain, path, tag, and digest.
 type ImageReference struct {
 	Protocol    Protocol
-	Digest      digest.Digest
+	Digest      types.Digest
 	Tag         string
 	ExplicitTag string
 	Path        string
@@ -76,11 +78,18 @@ func (ir *ImageReference) String() string {
 		return ir.Digest.String()
 	}
 
-	if ir.nn != nil {
-		return ir.nn.String()
+	// Build from struct fields
+	result := ir.Name()
+
+	if ir.Tag != "" {
+		result += ":" + ir.Tag
 	}
 
-	return ""
+	if ir.Digest != "" {
+		result += "@" + ir.Digest.String()
+	}
+
+	return result
 }
 
 // SuggestContainerName generates a suggested container name based on the image reference.
@@ -92,7 +101,7 @@ func (ir *ImageReference) SuggestContainerName(suffix string) string {
 		name = path.Base(ir.Path)
 	}
 
-	return name + "-" + suffix[:5] //revive:disable:add-constant
+	return name + "-" + suffix[:5] //revive:disable-line:add-constant
 }
 
 // Parse parses a raw image reference string and returns an ImageReference object.

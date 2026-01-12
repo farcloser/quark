@@ -162,14 +162,21 @@ install-dev-gotestsum:
 		&& go install gotest.tools/gotestsum@c4a0df2e75a225d979a444342dd3db752b53619f
 	$(call footer, $@)
 
-install-dev-tools: install-dev-gotestsum
+install-dev-jsonschema:
+	# go-jsonschema: v0.20.0 (omissis fork, 2025-06-19)
 	$(call title, $@)
-	# golangci: v2.0.2 (2024-03-26)
+	@cd $(MAKEFILE_DIR) \
+		&& go install github.com/atombender/go-jsonschema@v0.20.0
+	$(call footer, $@)
+
+install-dev-tools: install-dev-gotestsum install-dev-jsonschema
+	$(call title, $@)
+	# golangci: v2.7.1 (2025-12-04)
 	# git-validation: main (2025-02-25)
 	# ltag: main (2025-03-04)
 	# go-licenses: v2.0.1 (2025-10-21)
 	@cd $(MAKEFILE_DIR) \
-		&& go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@2b224c2cf4c9f261c22a16af7f8ca6408467f338 \
+		&& go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@a4b55ebc3471c9fbb763fd56eefede8050f99887 \
 		&& go install github.com/vbatts/git-validation@7b60e35b055dd2eab5844202ffffad51d9c93922 \
 		&& go install github.com/containerd/ltag@66e6a514664ee2d11a470735519fa22b1a9eaabd \
 		&& go install github.com/google/go-licenses/v2@3e084b0caf710f7bfead967567539214f598c0a2
@@ -197,7 +204,8 @@ test-unit-race:
 	test \
 	up \
 	unit \
-	install-dev-tools \
+	generate \
+	install-dev-tools install-dev-gotestsum install-dev-jsonschema \
 	lint-commits lint-go lint-go-all lint-headers lint-licenses lint-licenses-all lint-mod lint-shell lint-yaml \
 	fix-go fix-go-all fix-mod \
 	test-unit test-unit-race test-unit-bench \
@@ -214,6 +222,12 @@ BINARY_PATH=./bin/$(BINARY_NAME)
 GOCMD=go
 GOBUILD=$(GOCMD) build
 GOINSTALL=$(GOCMD) install
+
+generate: install-dev-jsonschema ## Generate code from schemas
+	$(call title, $@)
+	@cd $(MAKEFILE_DIR) \
+		&& go generate ./...
+	$(call footer, $@)
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
