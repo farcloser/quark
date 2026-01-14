@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	coressh "github.com/farcloser/quark/pkg/core/ssh"
+	"github.com/farcloser/quark/pkg/core/sshprime"
 )
 
 // SSHAuth implements transport.AuthMethod using hardened SSH settings.
@@ -20,7 +20,7 @@ import (
 type SSHAuth struct {
 	endpoint      string
 	fingerprint   string
-	key           *coressh.Key
+	key           *sshprime.Key
 	withSSHConfig bool
 }
 
@@ -32,7 +32,7 @@ type SSHAuth struct {
 //   - key: Optional SSH key for authentication
 //
 // If fingerprint is empty, ~/.ssh/known_hosts is used for host verification.
-func NewSSHAuth(endpoint, fingerprint string, key *coressh.Key, withSSHConfig bool) *SSHAuth {
+func NewSSHAuth(endpoint, fingerprint string, key *sshprime.Key, withSSHConfig bool) *SSHAuth {
 	return &SSHAuth{
 		endpoint:      endpoint,
 		fingerprint:   fingerprint,
@@ -55,23 +55,23 @@ func (a *SSHAuth) String() string {
 // This is called by go-git when establishing SSH connections.
 func (a *SSHAuth) ClientConfig() (*ssh.ClientConfig, error) {
 	// Resolve the endpoint
-	endpoint, err := coressh.Resolve(a.endpoint, a.withSSHConfig)
+	endpoint, err := sshprime.Resolve(a.endpoint, a.withSSHConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve endpoint: %w", err)
 	}
 
 	// If fingerprint is provided, trust it before getting the config
 	if a.fingerprint != "" {
-		coressh.GetFingerprinter().Trust(endpoint, a.fingerprint)
+		sshprime.GetFingerprinter().Trust(endpoint, a.fingerprint)
 	}
 
 	// Build keys slice if key is provided
-	var keys []*coressh.Key
+	var keys []*sshprime.Key
 	if a.key != nil {
-		keys = []*coressh.Key{a.key}
+		keys = []*sshprime.Key{a.key}
 	}
 
-	cfg, err := coressh.GetClientConfig(keys, endpoint, a.withSSHConfig)
+	cfg, err := sshprime.GetClientConfig(keys, endpoint, a.withSSHConfig)
 	if err != nil {
 		return nil, fmt.Errorf("get ssh config: %w", err)
 	}

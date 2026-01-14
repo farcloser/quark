@@ -11,6 +11,9 @@ const (
 	tag       = "quark"
 	omitempty = "omitempty"
 	swap      = "swap"
+	bit32     = 32
+	bit64     = 64
+	decimal   = 10
 )
 
 // Config defines the type of serializer we want.
@@ -40,6 +43,8 @@ func ConfigToString(cnf any) string {
 
 		fieldTag := typeOf.Field(i).Tag.Get(tag)
 		if fieldTag == "" {
+			// Type assertions are safe here: ConvertibleTo for struct types only returns true
+			// if the field is actually a Config struct (or identical unnamed type).
 			if fieldValue.Type().ConvertibleTo(baseConfigType) {
 				endofline = fieldValue.Interface().(Config).EndOfLine     //nolint:forcetypeassert
 				kvsep = fieldValue.Interface().(Config).KeyValueSeparator //nolint:forcetypeassert
@@ -52,13 +57,13 @@ func ConfigToString(cnf any) string {
 
 		qual := strings.Split(fieldTag, ",")
 		key := qual[0]
-		ommitter := false
+		omitter := false
 		swapper := false
 
 		for _, v := range qual {
 			switch v {
 			case omitempty:
-				ommitter = true
+				omitter = true
 			case swap:
 				swapper = true
 			default:
@@ -67,18 +72,30 @@ func ConfigToString(cnf any) string {
 
 		finalValue := ""
 
-		if fieldValue.Type().Kind() == reflect.Bool {
+		//nolint:exhaustive
+		switch fieldValue.Type().Kind() {
+		case reflect.Bool:
 			boolValue := fieldValue.Bool()
 			if swapper {
 				boolValue = !boolValue
 			}
 
 			finalValue = strconv.FormatBool(boolValue)
-		} else if fieldValue.Type().Kind() == reflect.String {
+		case reflect.String:
 			finalValue = fieldValue.String()
-			if finalValue == "" && ommitter {
+			if finalValue == "" && omitter {
 				continue
 			}
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			finalValue = strconv.FormatInt(fieldValue.Int(), decimal)
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			finalValue = strconv.FormatUint(fieldValue.Uint(), decimal)
+		case reflect.Float32:
+			finalValue = strconv.FormatFloat(fieldValue.Float(), 'f', -1, bit32)
+		case reflect.Float64:
+			finalValue = strconv.FormatFloat(fieldValue.Float(), 'f', -1, bit64)
+		default:
+			// Unsupported types (slices, maps, structs, pointers) produce empty values
 		}
 
 		if quoted {

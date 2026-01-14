@@ -1,8 +1,8 @@
-//nolint:gochecknoglobals
 package filesystem
 
 import "go.farcloser.world/core/filesystem"
 
+//nolint:gochecknoglobals
 var (
 	// Unlock releases a flock.
 	Unlock = filesystem.Unlock

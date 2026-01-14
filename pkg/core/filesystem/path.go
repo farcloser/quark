@@ -1,4 +1,3 @@
-//nolint:gochecknoglobals
 package filesystem
 
 import (
@@ -13,6 +12,8 @@ import (
 )
 
 // ValidatePathComponent enforces OS-specific filename restrictions on a single path component.
+//
+//nolint:gochecknoglobals
 var ValidatePathComponent = filesystem.ValidatePathComponent
 
 // ValidatePath validates a full path by checking each component.

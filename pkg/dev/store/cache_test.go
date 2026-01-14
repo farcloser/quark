@@ -1,4 +1,3 @@
-//nolint:revive,modernize // waitgroup pattern is fine for tests
 package store_test
 
 import (
@@ -11,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/farcloser/quark/dev/store"
+	"github.com/farcloser/quark/pkg/dev/store"
 	"github.com/farcloser/quark/pkg/fault"
 )
 
 func computeDigest(content []byte) string {
 	hash := sha256.Sum256(content)
 
-	return hex.EncodeToString(hash[:])
+	return "sha256:" + hex.EncodeToString(hash[:])
 }
 
 func TestCache_WriteAndRead(t *testing.T) {
@@ -116,8 +115,11 @@ func TestCache_ReadNotExists(t *testing.T) {
 	root := t.TempDir()
 	cache := store.NewCache(root)
 
+	// Use a valid digest format for non-existent content
+	nonexistentDigest := computeDigest([]byte("content that doesn't exist yet"))
+
 	// Acquire non-existent content - should get both reader and writer
-	reader, writer, err := cache.Acquire("nonexistent")
+	reader, writer, err := cache.Acquire(nonexistentDigest)
 	if err != nil {
 		t.Fatalf("Acquire() error: %v", err)
 	}
@@ -160,6 +162,7 @@ func TestCache_WriteDigestMismatch(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
+
 		_, readErr = io.ReadAll(reader)
 		reader.Close()
 	}()
@@ -214,6 +217,7 @@ func TestCache_WriteAlreadyExists(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
+
 		io.ReadAll(reader1)
 		reader1.Close()
 	}()
@@ -275,7 +279,11 @@ func TestCache_ConcurrentReadWhileWrite(t *testing.T) {
 		close(writerStarted)
 
 		// Read from pipe in background
+		wg.Add(1)
+
 		go func() {
+			defer wg.Done()
+
 			data, err := io.ReadAll(reader)
 			if err != nil {
 				t.Errorf("writer's reader ReadAll() error: %v", err)
@@ -453,6 +461,7 @@ func TestCache_MultipleReadersComplete(t *testing.T) {
 
 	go func() {
 		defer setupWg.Done()
+
 		io.ReadAll(reader1)
 		reader1.Close()
 	}()
@@ -600,6 +609,7 @@ func TestCache_EmptyContent(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
+
 		io.ReadAll(reader1)
 		reader1.Close()
 	}()
@@ -750,7 +760,7 @@ func TestCache_ConcurrentWritersRace(t *testing.T) {
 	for i := range numGoroutines {
 		wg.Add(1)
 
-		go func(id int) {
+		go func(_ int) {
 			defer wg.Done()
 
 			<-start // Wait for signal
@@ -770,10 +780,14 @@ func TestCache_ConcurrentWritersRace(t *testing.T) {
 
 			if gotWriter {
 				// I'm the writer - write content
+				wg.Add(1)
+
 				go func() {
+					defer wg.Done()
 					// Read from my connected reader
 					data, _ := io.ReadAll(reader)
 					reader.Close()
+
 					results <- struct {
 						gotWriter bool
 						readData  []byte
@@ -787,6 +801,7 @@ func TestCache_ConcurrentWritersRace(t *testing.T) {
 				// I'm a reader only
 				data, err := io.ReadAll(reader)
 				reader.Close()
+
 				results <- struct {
 					gotWriter bool
 					readData  []byte
@@ -804,11 +819,13 @@ func TestCache_ConcurrentWritersRace(t *testing.T) {
 	// Analyze results
 	for result := range results {
 		mu.Lock()
+
 		if result.gotWriter {
 			writerCount++
 		} else {
 			readerOnlyCount++
 		}
+
 		mu.Unlock()
 
 		if result.err != nil {
@@ -1009,7 +1026,7 @@ func TestCache_RapidAcquireClose(t *testing.T) {
 			buf := make([]byte, 5)
 
 			_, err = reader.Read(buf)
-			if err != nil && err != io.EOF {
+			if err != nil && !errors.Is(err, io.EOF) {
 				t.Errorf("iteration %d: Read() error: %v", id, err)
 			}
 
@@ -1379,6 +1396,313 @@ func TestCache_StressReadersWhileWriting(t *testing.T) {
 				t.Errorf("reader %d: data mismatch, got %d bytes", id, len(data))
 			}
 		}(i)
+	}
+
+	wg.Wait()
+}
+
+// TestCache_GC_UnderQuota tests GC does nothing when under quota.
+func TestCache_GC_UnderQuota(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// 1MB quota
+	cache := store.NewCache(root, 1024*1024)
+
+	// Write small content - well under quota
+	content := []byte("small content")
+	digest := computeDigest(content)
+
+	reader1, writer, err := cache.Acquire(digest)
+	if err != nil {
+		t.Fatalf("Acquire() error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		io.ReadAll(reader1)
+		reader1.Close()
+	}()
+
+	_, _ = writer.Write(content)
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer.Close() error: %v", err)
+	}
+
+	// Wait for reader goroutine to complete
+	wg.Wait()
+
+	// Run GC
+	stats, err := cache.GarbageCollect()
+	if err != nil {
+		t.Fatalf("GarbageCollect() error: %v", err)
+	}
+
+	// Nothing should be freed - we're under quota
+	if stats.BytesFreed != 0 {
+		t.Errorf("BytesFreed = %d, want 0 (under quota)", stats.BytesFreed)
+	}
+
+	// Content should still be accessible
+	reader2, _, err := cache.Acquire(digest)
+	if err != nil {
+		t.Fatalf("Acquire() after GC error: %v", err)
+	}
+
+	defer reader2.Close()
+
+	data, err := io.ReadAll(reader2)
+	if err != nil {
+		t.Fatalf("ReadAll() after GC error: %v", err)
+	}
+
+	if !bytes.Equal(data, content) {
+		t.Error("content corrupted after GC")
+	}
+}
+
+// TestCache_GC_OverQuota tests GC removes entries when over quota.
+func TestCache_GC_OverQuota(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// Tiny quota - 100 bytes
+	cache := store.NewCache(root, 100)
+
+	// Write content that exceeds quota
+	content1 := make([]byte, 200)
+	for i := range content1 {
+		content1[i] = 'a'
+	}
+
+	digest1 := computeDigest(content1)
+
+	reader1, writer1, err := cache.Acquire(digest1)
+	if err != nil {
+		t.Fatalf("Acquire() error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		io.ReadAll(reader1)
+		reader1.Close()
+	}()
+
+	_, _ = writer1.Write(content1)
+
+	if err := writer1.Close(); err != nil {
+		t.Fatalf("writer.Close() error: %v", err)
+	}
+
+	// Wait for reader to release lock
+	wg.Wait()
+
+	// Run GC - should free the entry since it exceeds quota
+	stats, err := cache.GarbageCollect()
+	if err != nil {
+		t.Fatalf("GarbageCollect() error: %v", err)
+	}
+
+	// Entry should have been freed
+	if stats.BytesFreed == 0 {
+		t.Error("BytesFreed = 0, expected entry to be removed (over quota)")
+	}
+}
+
+// TestCache_GC_PreservesInUseEntries tests GC doesn't remove entries with active readers.
+func TestCache_GC_PreservesInUseEntries(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// Tiny quota to force GC to want to clean
+	cache := store.NewCache(root, 10)
+
+	// Write content
+	content := make([]byte, 500)
+	for i := range content {
+		content[i] = 'x'
+	}
+
+	digest := computeDigest(content)
+
+	reader, writer, err := cache.Acquire(digest)
+	if err != nil {
+		t.Fatalf("Acquire() error: %v", err)
+	}
+
+	// Read in background but DON'T close the reader yet
+	var readData []byte
+
+	var readWg sync.WaitGroup
+
+	readWg.Add(1)
+
+	go func() {
+		defer readWg.Done()
+
+		readData, _ = io.ReadAll(reader)
+		// Don't close reader - keep it open
+	}()
+
+	_, _ = writer.Write(content)
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer.Close() error: %v", err)
+	}
+
+	readWg.Wait()
+
+	// Reader is still open (holding lock)
+	// GC should NOT be able to remove this entry
+
+	stats, err := cache.GarbageCollect()
+	if err != nil {
+		t.Fatalf("GarbageCollect() error: %v", err)
+	}
+
+	// Entry should NOT be freed - it's in use
+	if stats.BytesFreed != 0 {
+		t.Errorf("BytesFreed = %d, want 0 (entry in use)", stats.BytesFreed)
+	}
+
+	// Now close the reader
+	reader.Close()
+
+	// Verify data was correct
+	if !bytes.Equal(readData, content) {
+		t.Error("data mismatch")
+	}
+}
+
+// TestCache_GC_StatsAccuracy tests GC stats are accurate.
+func TestCache_GC_StatsAccuracy(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// 50 byte quota
+	cache := store.NewCache(root, 50)
+
+	var wg sync.WaitGroup
+
+	// Write two entries, each 100 bytes
+	for i := range 2 {
+		content := make([]byte, 100)
+		for j := range content {
+			content[j] = byte('a' + i)
+		}
+
+		digest := computeDigest(content)
+
+		reader, writer, err := cache.Acquire(digest)
+		if err != nil {
+			t.Fatalf("Acquire() error: %v", err)
+		}
+
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			io.ReadAll(reader)
+			reader.Close()
+		}()
+
+		_, _ = writer.Write(content)
+
+		if err := writer.Close(); err != nil {
+			t.Fatalf("writer.Close() error: %v", err)
+		}
+	}
+
+	// Wait for all readers to complete and release locks
+	wg.Wait()
+
+	// Run GC - should free entries to get under 50 byte quota
+	stats, err := cache.GarbageCollect()
+	if err != nil {
+		t.Fatalf("GarbageCollect() error: %v", err)
+	}
+
+	if stats.Quota != 50 {
+		t.Errorf("Quota = %d, want 50", stats.Quota)
+	}
+
+	// Should have freed at least 150 bytes (200 total - 50 quota)
+	// to get to 50 or under
+	if stats.BytesFreed < 150 {
+		t.Errorf("BytesFreed = %d, expected >= 150", stats.BytesFreed)
+	}
+
+	if stats.Remaining > 50 {
+		t.Errorf("Remaining = %d, should be <= quota (50)", stats.Remaining)
+	}
+}
+
+// TestCache_GC_ConcurrentWithAcquire tests GC doesn't interfere with concurrent Acquire.
+func TestCache_GC_ConcurrentWithAcquire(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	cache := store.NewCache(root, 1024*1024) // 1MB quota
+
+	var wg sync.WaitGroup
+
+	// Run multiple acquire/release cycles concurrently with GC
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(idx int) {
+			defer wg.Done()
+
+			content := make([]byte, 1000+idx*100)
+			for j := range content {
+				content[j] = byte(idx)
+			}
+
+			digest := computeDigest(content)
+
+			reader, writer, err := cache.Acquire(digest)
+			if err != nil {
+				t.Errorf("Acquire(%d) error: %v", idx, err)
+
+				return
+			}
+
+			go func() {
+				io.ReadAll(reader)
+				reader.Close()
+			}()
+
+			if writer != nil {
+				_, _ = writer.Write(content)
+				writer.Close()
+			}
+		}(i)
+	}
+
+	// Run GC concurrently
+	for range 3 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			_, err := cache.GarbageCollect()
+			if err != nil {
+				t.Errorf("GarbageCollect() error: %v", err)
+			}
+		}()
 	}
 
 	wg.Wait()

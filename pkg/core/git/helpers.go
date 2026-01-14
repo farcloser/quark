@@ -117,7 +117,7 @@ func buildSSHSignatureBlob(pubKey ssh.PublicKey, sig *ssh.Signature) []byte {
 
 // parseSSHSignatureBlob parses the SSH signature blob.
 //
-//nolint:revive // 4 return values is appropriate for parsing functions
+//revive:disable:function-result-limit // 4 return values is appropriate for parsing functions
 func parseSSHSignatureBlob(data []byte) (ssh.PublicKey, string, *ssh.Signature, error) {
 	if len(data) < sshSigMagicLen || string(data[:sshSigMagicLen]) != sshSigMagic {
 		return nil, "", nil, ErrSignatureInvalidMagic

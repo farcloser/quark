@@ -37,4 +37,8 @@ var (
 
 	// DefaultSSHConnectionTimeout is the timeout for ssh connections.
 	DefaultSSHConnectionTimeout = 30 * time.Second
+
+	// DefaultSSHKeepaliveTimeout is how long to wait for a keepalive response before
+	// considering the connection dead.
+	DefaultSSHKeepaliveTimeout = 15 * time.Second
 )

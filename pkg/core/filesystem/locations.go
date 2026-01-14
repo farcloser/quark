@@ -43,13 +43,13 @@ func RuntimeDir() (string, error) {
 	switch runtime.GOOS {
 	case linux:
 		if xdgRuntime := os.Getenv("XDG_RUNTIME_DIR"); xdgRuntime != "" {
-			baseDir = filepath.Join(xdgRuntime, version.Name)
+			baseDir = filepath.Join(xdgRuntime, version.Name())
 		} else {
-			baseDir = filepath.Join(os.TempDir(), version.Name)
+			baseDir = filepath.Join(os.TempDir(), version.Name())
 		}
 	default:
 		// macOS, Windows, and others use temp directory
-		baseDir = filepath.Join(os.TempDir(), version.Name)
+		baseDir = filepath.Join(os.TempDir(), version.Name())
 	}
 
 	if err := os.MkdirAll(baseDir, DirPermissionsPrivate); err != nil {
@@ -78,24 +78,24 @@ func DataDir() (string, error) {
 func getDataDir() string {
 	switch runtime.GOOS {
 	case darwin:
-		return filepath.Join(HomeDir(), "Library", "Application Support", version.Name)
+		return filepath.Join(HomeDir(), "Library", "Application Support", version.Name())
 
 	case linux:
 		if dataHome := os.Getenv("XDG_DATA_HOME"); dataHome != "" {
-			return filepath.Join(dataHome, version.Name)
+			return filepath.Join(dataHome, version.Name())
 		}
 
-		return filepath.Join(HomeDir(), ".local", "share", version.Name)
+		return filepath.Join(HomeDir(), ".local", "share", version.Name())
 
 	case windows:
 		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			return filepath.Join(localAppData, version.Name)
+			return filepath.Join(localAppData, version.Name())
 		}
 
-		return filepath.Join(HomeDir(), "AppData", "Local", version.Name)
+		return filepath.Join(HomeDir(), "AppData", "Local", version.Name())
 
 	default:
-		return filepath.Join(HomeDir(), ".local", "share", version.Name)
+		return filepath.Join(HomeDir(), ".local", "share", version.Name())
 	}
 }
 
@@ -112,7 +112,7 @@ func ConfigDir() (string, error) {
 		panic(fmt.Sprintf("%v: %v", fault.ErrSystemFailure, err))
 	}
 
-	configDir := filepath.Join(base, version.Name)
+	configDir := filepath.Join(base, version.Name())
 
 	if err := os.MkdirAll(configDir, DirPermissionsPrivate); err != nil {
 		return "", fmt.Errorf("%w: %w", fault.ErrFilesystemFailure, err)
@@ -140,24 +140,24 @@ func CacheDir(sub ...string) (string, error) {
 func getCacheDir() string {
 	switch runtime.GOOS {
 	case darwin:
-		return filepath.Join(HomeDir(), "Library", "Caches", version.Name)
+		return filepath.Join(HomeDir(), "Library", "Caches", version.Name())
 
 	case linux:
 		if xdgCache := os.Getenv("XDG_CACHE_HOME"); xdgCache != "" {
-			return filepath.Join(xdgCache, version.Name)
+			return filepath.Join(xdgCache, version.Name())
 		}
 
-		return filepath.Join(HomeDir(), ".cache", version.Name)
+		return filepath.Join(HomeDir(), ".cache", version.Name())
 
 	case windows:
 		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			return filepath.Join(localAppData, version.Name, "cache")
+			return filepath.Join(localAppData, version.Name(), "cache")
 		}
 
-		return filepath.Join(HomeDir(), "AppData", "Local", version.Name, "cache")
+		return filepath.Join(HomeDir(), "AppData", "Local", version.Name(), "cache")
 
 	default:
-		return filepath.Join(HomeDir(), ".cache", version.Name)
+		return filepath.Join(HomeDir(), ".cache", version.Name())
 	}
 }
 

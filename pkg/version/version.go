@@ -1,11 +1,15 @@
 package version
 
-// Version is the version of Quark, to be overridden at build time.
-//
-//nolint:gochecknoglobals
-var Version = "0.1.0"
+var version = "0.1.0-dev"
 
-// Name is the stringified name of quark to be used for user agent and other identifiable product information.
-//
-//nolint:gochecknoglobals
-var Name = "quark"
+var name = "quark" //nolint:gochecknoglobals // Set via ldflags at build time.
+
+// Version returns the compile time version.
+func Version() string {
+	return version
+}
+
+// Name returns the compile time name.
+func Name() string {
+	return name
+}

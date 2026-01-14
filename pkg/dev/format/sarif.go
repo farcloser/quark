@@ -1,7 +1,7 @@
 package format
 
 import (
-	"github.com/farcloser/quark/dev/format/sarif"
+	"github.com/farcloser/quark/pkg/dev/format/sarif"
 	"github.com/farcloser/quark/pkg/version"
 )
 
@@ -23,6 +23,7 @@ const (
 func NewSARIFReport() *sarif.SarifSchema210Json {
 	schema := SARIFSchema
 	infoURI := QuarkInfoURI
+	ver := version.Version()
 
 	return &sarif.SarifSchema210Json{
 		Schema:  &schema,
@@ -31,8 +32,8 @@ func NewSARIFReport() *sarif.SarifSchema210Json {
 			{
 				Tool: sarif.Tool{
 					Driver: sarif.ToolComponent{
-						Name:           version.Name,
-						Version:        &version.Version,
+						Name:           version.Name(),
+						Version:        &ver,
 						InformationUri: &infoURI,
 					},
 				},

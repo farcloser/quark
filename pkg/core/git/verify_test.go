@@ -860,3 +860,76 @@ func TestGetCommitSignerMalformedPublicKey(t *testing.T) {
 	_, err = repo.GetCommitSigner(hash)
 	assert.ErrorIs(t, err, git.ErrSignatureInvalidFormat)
 }
+
+// TestIsSigned_SignedCommit tests that IsSigned returns true for signed commits.
+func TestIsSigned_SignedCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	repo, err := git.Init(dir)
+	assert.NilError(t, err)
+
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	assert.NilError(t, err)
+
+	sshSigner, err := ssh.NewSignerFromKey(privateKey)
+	assert.NilError(t, err)
+
+	hash, err := repo.CreateEmptyCommit(
+		"signed commit",
+		git.Author{Name: "Test", Email: "test@example.com"},
+		sshSigner,
+		time.Now(),
+	)
+	assert.NilError(t, err)
+
+	signed, err := repo.IsSigned(hash)
+	assert.NilError(t, err)
+	assert.Assert(t, signed, "IsSigned should return true for signed commit")
+}
+
+// TestIsSigned_UnsignedCommit tests that IsSigned returns false for unsigned commits.
+func TestIsSigned_UnsignedCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	repo, err := git.Init(dir)
+	assert.NilError(t, err)
+
+	hash, err := repo.CreateEmptyCommit(
+		"unsigned commit",
+		git.Author{Name: "Test", Email: "test@example.com"},
+		nil,
+		time.Now(),
+	)
+	assert.NilError(t, err)
+
+	signed, err := repo.IsSigned(hash)
+	assert.NilError(t, err)
+	assert.Assert(t, !signed, "IsSigned should return false for unsigned commit")
+}
+
+// TestIsSigned_NonExistentCommit tests that IsSigned returns error for non-existent commits.
+func TestIsSigned_NonExistentCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	repo, err := git.Init(dir)
+	assert.NilError(t, err)
+
+	// Create an initial commit so the repo isn't empty.
+	_, err = repo.CreateEmptyCommit(
+		"initial",
+		git.Author{Name: "Test", Email: "test@example.com"},
+		nil,
+		time.Now(),
+	)
+	assert.NilError(t, err)
+
+	// Try to check a non-existent commit hash.
+	_, err = repo.IsSigned("0000000000000000000000000000000000000000")
+	assert.ErrorIs(t, err, git.ErrSignatureNoSuchCommit)
+}
