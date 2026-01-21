@@ -6,8 +6,8 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/internal/signature/sigstore"
+	"github.com/farcloser/quark/pkg/fault"
+	"github.com/farcloser/quark/pkg/sys/signature/sigstore"
 )
 
 // Minimal valid TrustedRoot JSON structure.
@@ -149,7 +149,7 @@ func TestFromBytes_FailureDoesNotClearPreviousRoot(t *testing.T) {
 
 // TestFromNetwork_Integration tests network fetching of the TrustedRoot.
 // This test requires network access and is skipped by default.
-// Run with: go test -run TestFromNetwork_Integration -tags=integration
+// Run with: go test -run TestFromNetwork_Integration -tags=integration.
 func TestFromNetwork_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping network test in short mode")

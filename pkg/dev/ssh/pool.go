@@ -35,12 +35,12 @@ type Pool struct {
 	WithSSHConfig bool
 }
 
-// GetClientWithKey returns a Connection for the given endpoint with optional fingerprint and SSH key.
+// GetClient returns a Connection for the given endpoint with optional fingerprint and SSH key.
 // If key is provided, it will be used for authentication additionally to SSH agent (* dependent on ssh configuration
 // obviously).
 // If fingerprint is provided, it will be used for host key verification in addition to ~/.ssh/known_hosts.
 // Connections are health-checked before being returned; dead connections are automatically replaced.
-func (p *Pool) GetClientWithKey(endpoint, fingerprint string, sshKey []*sshprime.Key) (Connection, error) {
+func (p *Pool) GetClient(endpoint, fingerprint string, sshKey []sshprime.Key) (Connection, error) {
 	// Resolve endpoint
 	edp, err := sshprime.Resolve(endpoint, p.WithSSHConfig)
 	if err != nil {

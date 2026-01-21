@@ -8,9 +8,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"strings"
 
-	v1 "github.com/in-toto/attestation/go/v1"
+	"github.com/in-toto/attestation/go/v1"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"
@@ -19,6 +18,7 @@ import (
 	"github.com/sigstore/sigstore/pkg/signature/payload"
 
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/core/digest"
 )
 
 // Convert transforms a legacy cosign simple signing payload and its annotations
@@ -50,10 +50,10 @@ func ParseSimpleSigning(pld []byte) (*v1.Statement, error) {
 	// Format is "sha256:abc123..." or just the algorithm:hash.
 	imageDigest := simple.Critical.Image.DockerManifestDigest
 
-	// Parse the digest into algorithm and hash.
-	algorithm, hash, found := strings.Cut(imageDigest, ":")
-	if !found {
-		return nil, fmt.Errorf("invalid digest format: %s", imageDigest)
+	dgst, err := digest.FromString(imageDigest)
+	//nolint:wrapcheck
+	if err != nil {
+		return nil, err
 	}
 
 	// Create an in-toto statement with the image digest as subject.
@@ -63,7 +63,7 @@ func ParseSimpleSigning(pld []byte) (*v1.Statement, error) {
 		Subject: []*v1.ResourceDescriptor{
 			{
 				Digest: map[string]string{
-					algorithm: hash,
+					string(dgst.Algorithm()): dgst.Encoded(),
 				},
 			},
 		},
@@ -89,6 +89,7 @@ func ConvertAttestation(envelope []byte, annotations map[string]string) ([]byte,
 // parseDSSEEnvelope parses a JSON DSSE envelope into protobuf format.
 func parseDSSEEnvelope(data []byte) (*protodsse.Envelope, error) {
 	// Parse JSON structure.
+	//revive:disable:nested-structs
 	var jsonEnv struct {
 		Payload     string `json:"payload"`
 		PayloadType string `json:"payloadType"`
@@ -103,7 +104,7 @@ func parseDSSEEnvelope(data []byte) (*protodsse.Envelope, error) {
 	}
 
 	// Decode base64 payload.
-	payload, err := base64.StdEncoding.DecodeString(jsonEnv.Payload)
+	dssePayload, err := base64.StdEncoding.DecodeString(jsonEnv.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("%w: decode payload: %w", errFailedParsingDSSEEnvelope, err)
 	}
@@ -111,14 +112,14 @@ func parseDSSEEnvelope(data []byte) (*protodsse.Envelope, error) {
 	// Build protobuf signatures.
 	var sigs []*protodsse.Signature
 
-	for _, s := range jsonEnv.Signatures {
-		sig, err := base64.StdEncoding.DecodeString(s.Sig)
+	for _, encSig := range jsonEnv.Signatures {
+		sig, err := base64.StdEncoding.DecodeString(encSig.Sig)
 		if err != nil {
 			return nil, fmt.Errorf("%w: decode signature: %w", errFailedParsingDSSEEnvelope, err)
 		}
 
 		sigs = append(sigs, &protodsse.Signature{
-			Keyid: s.KeyID,
+			Keyid: encSig.KeyID,
 			Sig:   sig,
 		})
 	}
@@ -128,13 +129,15 @@ func parseDSSEEnvelope(data []byte) (*protodsse.Envelope, error) {
 	}
 
 	return &protodsse.Envelope{
-		Payload:     payload,
+		Payload:     dssePayload,
 		PayloadType: jsonEnv.PayloadType,
 		Signatures:  sigs,
 	}, nil
 }
 
 // buildAttestationBundle creates a sigstore bundle with DSSE envelope content.
+//
+//revive:disable:flag-parameter
 func buildAttestationBundle(
 	dsseEnvelope *protodsse.Envelope,
 	annotations map[string]string,
@@ -223,13 +226,13 @@ func buildMessageSignature(pld []byte, annotations map[string]string) (*protobun
 	}
 
 	// Compute SHA256 digest of the simple signing payload.
-	digest := sha256.Sum256(pld)
+	dgst := sha256.Sum256(pld)
 
 	return &protobundle.Bundle_MessageSignature{
 		MessageSignature: &protocommon.MessageSignature{
 			MessageDigest: &protocommon.HashOutput{
 				Algorithm: protocommon.HashAlgorithm_SHA2_256,
-				Digest:    digest[:],
+				Digest:    dgst[:],
 			},
 			Signature: sig,
 		},
@@ -321,17 +324,17 @@ func extractTlogEntries(annotations map[string]string) ([]*protorekor.Transparen
 		return nil, fmt.Errorf("%w: unmarshal bundle annotation: %w", errFailedExtractingTLogEntries, err)
 	}
 
-	payload, payloadOK := jsonData["Payload"].(map[string]any)
+	entryPayload, payloadOK := jsonData["Payload"].(map[string]any)
 	if !payloadOK {
 		return nil, fmt.Errorf("%w: missing Payload", errFailedExtractingTLogEntries)
 	}
 
-	logIndex, logIndexOK := payload["logIndex"].(float64)
+	logIndex, logIndexOK := entryPayload["logIndex"].(float64)
 	if !logIndexOK {
 		return nil, fmt.Errorf("%w: missing logIndex", errFailedExtractingTLogEntries)
 	}
 
-	logIDHex, logIDOK := payload["logID"].(string)
+	logIDHex, logIDOK := entryPayload["logID"].(string)
 	if !logIDOK {
 		return nil, fmt.Errorf("%w: missing logID", errFailedExtractingTLogEntries)
 	}
@@ -341,7 +344,7 @@ func extractTlogEntries(annotations map[string]string) ([]*protorekor.Transparen
 		return nil, fmt.Errorf("%w: decode logID: %w", errFailedExtractingTLogEntries, err)
 	}
 
-	integratedTime, timeOK := payload["integratedTime"].(float64)
+	integratedTime, timeOK := entryPayload["integratedTime"].(float64)
 	if !timeOK {
 		return nil, fmt.Errorf("%w: missing integratedTime", errFailedExtractingTLogEntries)
 	}
@@ -356,7 +359,7 @@ func extractTlogEntries(annotations map[string]string) ([]*protorekor.Transparen
 		return nil, fmt.Errorf("%w: decode signedEntryTimestamp: %w", errFailedExtractingTLogEntries, err)
 	}
 
-	bodyB64, bodyOK := payload["body"].(string)
+	bodyB64, bodyOK := entryPayload["body"].(string)
 	if !bodyOK {
 		return nil, fmt.Errorf("%w: missing body", errFailedExtractingTLogEntries)
 	}
@@ -372,8 +375,15 @@ func extractTlogEntries(annotations map[string]string) ([]*protorekor.Transparen
 		return nil, fmt.Errorf("%w: unmarshal body: %w", errFailedExtractingTLogEntries, err)
 	}
 
-	apiVersion, _ := bodyJSON["apiVersion"].(string)
-	kind, _ := bodyJSON["kind"].(string)
+	apiVersion, oki := bodyJSON["apiVersion"].(string)
+	if !oki {
+		return nil, fmt.Errorf("%w: missing or invalid apiVersion", errFailedExtractingTLogEntries)
+	}
+
+	kind, oki := bodyJSON["kind"].(string)
+	if !oki {
+		return nil, fmt.Errorf("%w: missing or invalid kind", errFailedExtractingTLogEntries)
+	}
 
 	return []*protorekor.TransparencyLogEntry{
 		{

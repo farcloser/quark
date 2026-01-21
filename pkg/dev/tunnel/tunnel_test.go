@@ -286,7 +286,7 @@ func TestTunnel_RealSSH(t *testing.T) {
 	fingerprint := testssh.GetHostFingerprint(t, container.Host)
 	testKey := testssh.GetTestKey(t)
 
-	client, err := pool.GetClientWithKey(container.Endpoint, fingerprint, []*sshprime.Key{testKey})
+	client, err := pool.GetClient(container.Endpoint, fingerprint, []sshprime.Key{testKey})
 	if err != nil {
 		t.Fatalf("failed to get client: %v", err)
 	}

@@ -14,6 +14,7 @@ func (cs *sigstoreSignature) Digests() []types.Digest {
 	subjects := cs.statement.GetSubject()
 
 	digests := []types.Digest{}
+
 	for _, subject := range subjects {
 		// FIXME: generalize to other digests types
 		if dgst, ok := subject.GetDigest()["sha256"]; ok {

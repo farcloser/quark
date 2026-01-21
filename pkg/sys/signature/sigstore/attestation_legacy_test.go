@@ -7,9 +7,9 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/farcloser/quark/internal/signature/cosign"
-	"github.com/farcloser/quark/internal/signature/sigstore"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/sys/signature/cosign"
+	"github.com/farcloser/quark/pkg/sys/signature/sigstore"
 	testcosign "github.com/farcloser/quark/testutil/cosign"
 )
 
@@ -142,7 +142,9 @@ func TestLegacyAttestation_MissingSignature(t *testing.T) {
 func TestLegacyAttestation_InvalidBase64(t *testing.T) {
 	t.Parallel()
 
-	envelope := []byte(`{"payload": "not-valid-base64!!!", "payloadType": "application/vnd.in-toto+json", "signatures": [{"sig": "dGVzdA=="}]}`)
+	envelope := []byte(
+		`{"payload": "not-valid-base64!!!", "payloadType": "application/vnd.in-toto+json", "signatures": [{"sig": "dGVzdA=="}]}`,
+	)
 
 	_, _, err := cosign.ConvertAttestation(envelope, nil)
 	assert.Assert(t, err != nil, "ConvertAttestation should fail with invalid base64 payload")

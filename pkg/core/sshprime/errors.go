@@ -28,8 +28,6 @@ var (
 
 	// ErrSignerNilKey indicates a nil key was provided.
 	ErrSignerNilKey = errors.New("key is nil")
-	// ErrSignerParseKey indicates failure parsing private key.
-	ErrSignerParseKey = errors.New("failed to parse private key")
 
 	// Client.
 

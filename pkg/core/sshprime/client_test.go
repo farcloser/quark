@@ -36,7 +36,7 @@ func getClient(t *testing.T, container *testssh.Container) *sshprime.Client {
 	// Load test key and use withSSHConfig=false to avoid known_hosts
 	testKey := testssh.GetTestKey(t)
 
-	config, err := sshprime.GetClientConfig([]*sshprime.Key{testKey}, endpoint, false)
+	config, err := sshprime.GetClientConfig([]sshprime.Key{testKey}, endpoint, false)
 	if err != nil {
 		t.Fatalf("failed to get client config: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestClient_Close(t *testing.T) {
 
 	testKey := testssh.GetTestKey(t)
 
-	config, err := sshprime.GetClientConfig([]*sshprime.Key{testKey}, endpoint, false)
+	config, err := sshprime.GetClientConfig([]sshprime.Key{testKey}, endpoint, false)
 	if err != nil {
 		t.Fatalf("failed to get client config: %v", err)
 	}

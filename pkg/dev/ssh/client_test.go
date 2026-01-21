@@ -23,7 +23,7 @@ func TestConnection_Execute(t *testing.T) {
 	fingerprint := testssh.GetHostFingerprint(t, container.Host)
 	testKey := testssh.GetTestKey(t)
 
-	client, err := pool.GetClientWithKey(container.Endpoint, fingerprint, []*sshprime.Key{testKey})
+	client, err := pool.GetClient(container.Endpoint, fingerprint, []sshprime.Key{testKey})
 	if err != nil {
 		t.Fatalf("failed to get client: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestPool_GetClient(t *testing.T) {
 
 		pool := sshpool.GetPool()
 
-		client, err := pool.GetClientWithKey(endpoint, fingerprint, []*sshprime.Key{testKey})
+		client, err := pool.GetClient(endpoint, fingerprint, []sshprime.Key{testKey})
 		if err != nil {
 			t.Fatalf("expected GetClient to succeed, got error: %v", err)
 		}
@@ -153,13 +153,13 @@ func TestPool_GetClient(t *testing.T) {
 		pool := sshpool.GetPool()
 
 		// First connection
-		client1, err := pool.GetClientWithKey(endpoint, fingerprint, []*sshprime.Key{testKey})
+		client1, err := pool.GetClient(endpoint, fingerprint, []sshprime.Key{testKey})
 		if err != nil {
 			t.Fatalf("first GetClient failed: %v", err)
 		}
 
 		// Second connection to same endpoint
-		client2, err := pool.GetClientWithKey(endpoint, fingerprint, []*sshprime.Key{testKey})
+		client2, err := pool.GetClient(endpoint, fingerprint, []sshprime.Key{testKey})
 		if err != nil {
 			t.Fatalf("second GetClient failed: %v", err)
 		}
@@ -181,7 +181,7 @@ func TestPool_GetClient(t *testing.T) {
 
 		pool := sshpool.GetPool()
 
-		client, err := pool.GetClientWithKey(endpoint, fingerprint, []*sshprime.Key{testKey})
+		client, err := pool.GetClient(endpoint, fingerprint, []sshprime.Key{testKey})
 		if err != nil {
 			t.Fatalf("GetClient failed: %v", err)
 		}
@@ -214,7 +214,7 @@ func TestPool_CloseAll(t *testing.T) {
 	pool := sshpool.GetPool()
 
 	// Create connection
-	client, err := pool.GetClientWithKey(endpoint, fingerprint, []*sshprime.Key{testKey})
+	client, err := pool.GetClient(endpoint, fingerprint, []sshprime.Key{testKey})
 	if err != nil {
 		t.Fatalf("GetClient failed: %v", err)
 	}

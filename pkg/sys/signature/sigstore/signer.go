@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/farcloser/quark/internal/signature/cosign"
-	v1 "github.com/in-toto/attestation/go/v1"
+	"github.com/in-toto/attestation/go/v1"
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/sys/signature/cosign"
 )
 
+// NewSigner returns a concrete Signer implementation based on sigstore.
 func NewSigner(sigRoot *types.Trusted) types.Signer {
 	return &sigstoreSigner{
 		sigRoot: sigRoot,
@@ -22,7 +23,7 @@ type sigstoreSigner struct {
 	sigRoot *types.Trusted
 }
 
-func (cs *sigstoreSigner) Sign(digest types.Digest) types.Signature {
+func (*sigstoreSigner) Sign(types.Digest) types.Signature {
 	panic("implement me")
 }
 
@@ -60,6 +61,72 @@ func (cs *sigstoreSigner) ReadSignature(
 			trustedRoot: cs.sigRoot,
 			statement:   statement,
 		},
+	}, nil
+}
+
+func (cs *sigstoreSigner) ReadAttestation(
+	payload []byte,
+	annotations map[string]string,
+	mediaType types.MediaType,
+) (attestation types.Attestation, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", types.ErrBundleReadFailed, err)
+		}
+	}()
+
+	// Handle legacy cosign DSSE envelope format.
+	if mediaType == layerMediaTypeDSSEEnvelope {
+		return cs.readLegacyAttestation(payload, annotations)
+	}
+
+	statement, sigBundle, err := extract(payload, mediaType)
+	if err != nil {
+		return nil, err
+	}
+
+	// If it is a signature, bail out.
+	predicateType := statement.GetPredicateType()
+	if predicateType == predicateTypeSignature {
+		return nil, fmt.Errorf("%w: %s", errUnrecognizedPredicateType, predicateType)
+	}
+
+	subjects := statement.GetSubject()
+	predicate := statement.GetPredicate()
+
+	// Convert from protobuf statement to in-toto-golang statement.
+	inStatement := &types.Statement{
+		StatementHeader: in_toto.StatementHeader{
+			Type:          statement.GetType(),
+			PredicateType: predicateType,
+		},
+	}
+
+	// Convert subjects.
+	for _, subj := range subjects {
+		inStatement.Subject = append(inStatement.Subject, in_toto.Subject{
+			Name:   subj.GetName(),
+			Digest: subj.GetDigest(),
+		})
+	}
+
+	// Predicate is stored as raw JSON in the protobuf struct.
+	if predicate != nil {
+		predicateBytes, err := predicate.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errFailedMarshallingPredicate, err)
+		}
+
+		inStatement.Predicate = json.RawMessage(predicateBytes)
+	}
+
+	return &sigstoreAttestation{
+		sigstoreBundle: sigstoreBundle{
+			annotations: annotations,
+			bundle:      sigBundle,
+			trustedRoot: cs.sigRoot,
+		},
+		statement: inStatement,
 	}, nil
 }
 
@@ -173,73 +240,7 @@ func (cs *sigstoreSigner) readLegacyAttestation(
 	}, nil
 }
 
-func (cs *sigstoreSigner) ReadAttestation(
-	payload []byte,
-	annotations map[string]string,
-	mediaType types.MediaType,
-) (attestation types.Attestation, err error) {
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("%w: %w", types.ErrBundleReadFailed, err)
-		}
-	}()
-
-	// Handle legacy cosign DSSE envelope format.
-	if mediaType == layerMediaTypeDSSEEnvelope {
-		return cs.readLegacyAttestation(payload, annotations)
-	}
-
-	statement, sigBundle, err := extract(payload, mediaType)
-	if err != nil {
-		return nil, err
-	}
-
-	// If it is a signature, bail out.
-	predicateType := statement.GetPredicateType()
-	if predicateType == predicateTypeSignature {
-		return nil, fmt.Errorf("%w: %s", errUnrecognizedPredicateType, predicateType)
-	}
-
-	subjects := statement.GetSubject()
-	predicate := statement.GetPredicate()
-
-	// Convert from protobuf statement to in-toto-golang statement.
-	inStatement := &types.Statement{
-		StatementHeader: in_toto.StatementHeader{
-			Type:          statement.GetType(),
-			PredicateType: predicateType,
-		},
-	}
-
-	// Convert subjects.
-	for _, subj := range subjects {
-		inStatement.Subject = append(inStatement.Subject, in_toto.Subject{
-			Name:   subj.GetName(),
-			Digest: subj.GetDigest(),
-		})
-	}
-
-	// Predicate is stored as raw JSON in the protobuf struct.
-	if predicate != nil {
-		predicateBytes, err := predicate.MarshalJSON()
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errFailedMarshallingPredicate, err)
-		}
-
-		inStatement.Predicate = json.RawMessage(predicateBytes)
-	}
-
-	return &sigstoreAttestation{
-		sigstoreBundle: sigstoreBundle{
-			annotations: annotations,
-			bundle:      sigBundle,
-			trustedRoot: cs.sigRoot,
-		},
-		statement: inStatement,
-	}, nil
-}
-
-// extract processes a raw payload and return a bundle and in-toto statement
+// extract processes a raw payload and return a bundle and in-toto statement.
 func extract(payload []byte, mediaType types.MediaType) (statement *v1.Statement, sigBundle *bundle.Bundle, err error) {
 	if mediaType != layerMediaTypeSigstoreBundle {
 		return nil, nil, fmt.Errorf("%w: %s", errUnrecognizedMediaType, mediaType)

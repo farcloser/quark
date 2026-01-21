@@ -10,9 +10,12 @@ import (
 
 // GetClientConfig returns an ssh config.
 // Note: we can't seal the implementation because go-git (or others) do depend on raw ClientConfig...
-func GetClientConfig(keys []*Key, endpoint *Endpoint, withSSHConfig bool) (*ssh.ClientConfig, error) {
+func GetClientConfig(keys []Key, endpoint *Endpoint, withSSHConfig bool) (*ssh.ClientConfig, error) {
 	// Get auth methods
-	authMethod := GetAuthMethod(keys, endpoint.Host, withSSHConfig)
+	signers := GetSigners(keys, endpoint.Host, withSSHConfig)
+	authMethod := ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+		return signers, nil
+	})
 
 	// Get fingerprint verifier
 	// Use known_hosts verification otherwise

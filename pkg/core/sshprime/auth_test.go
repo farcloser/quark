@@ -55,7 +55,19 @@ func marshalPrivateKeyToPEM(t *testing.T, priv ed25519.PrivateKey, passphrase []
 	return pem.EncodeToMemory(block)
 }
 
-func TestGetAuthMethod_AgentOnly(t *testing.T) {
+// mustNewKey creates a sshprime.Key from bytes and passphrase, or fails the test.
+func mustNewKey(t *testing.T, bytes, passphrase []byte) sshprime.Key {
+	t.Helper()
+
+	key, err := sshprime.NewKey(bytes, passphrase, false)
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+
+	return key
+}
+
+func TestGetSigners_AgentOnly(t *testing.T) {
 	// Start test agent and add a key.
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -65,16 +77,12 @@ func TestGetAuthMethod_AgentOnly(t *testing.T) {
 	// Close the singleton agent to force reconnection to our test agent.
 	sshprime.GetAgent().Close()
 
-	auth := sshprime.GetAuthMethod(nil, "somehost", false)
+	// Use withSSHConfig=true so that identityOnly=false and agent keys are included.
+	// With withSSHConfig=false, identityOnly=true and only explicitly requested keys are returned.
+	signers := sshprime.GetSigners(nil, "somehost", true)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
-	}
-
-	// Verify the agent key is accessible by getting signers directly.
-	signers, err := sshprime.GetAgent().Signers()
-	if err != nil {
-		t.Fatalf("failed to get signers: %v", err)
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 
 	if len(signers) != 1 {
@@ -86,7 +94,7 @@ func TestGetAuthMethod_AgentOnly(t *testing.T) {
 	}
 }
 
-func TestGetAuthMethod_ExplicitUnencryptedKey(t *testing.T) {
+func TestGetSigners_ExplicitUnencryptedKey(t *testing.T) {
 	// Start test agent (empty).
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -96,19 +104,16 @@ func TestGetAuthMethod_ExplicitUnencryptedKey(t *testing.T) {
 	priv, _ := generateAuthTestKey(t)
 	pemBytes := marshalPrivateKeyToPEM(t, priv, nil) // No passphrase
 
-	key := &sshprime.Key{
-		Bytes:      pemBytes,
-		Passphrase: nil,
-	}
+	key := mustNewKey(t, pemBytes, nil)
 
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
+	signers := sshprime.GetSigners([]sshprime.Key{key}, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_ExplicitEncryptedKeyWithPassphrase(t *testing.T) {
+func TestGetSigners_ExplicitEncryptedKeyWithPassphrase(t *testing.T) {
 	// Start test agent (empty).
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -119,19 +124,16 @@ func TestGetAuthMethod_ExplicitEncryptedKeyWithPassphrase(t *testing.T) {
 	passphrase := []byte("testpassword")
 	pemBytes := marshalPrivateKeyToPEM(t, priv, passphrase)
 
-	key := &sshprime.Key{
-		Bytes:      pemBytes,
-		Passphrase: passphrase,
-	}
+	key := mustNewKey(t, pemBytes, passphrase)
 
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
+	signers := sshprime.GetSigners([]sshprime.Key{key}, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_ExplicitEncryptedKeyMatchingAgent(t *testing.T) {
+func TestGetSigners_ExplicitEncryptedKeyMatchingAgent(t *testing.T) {
 	// Start test agent.
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -143,27 +145,20 @@ func TestGetAuthMethod_ExplicitEncryptedKeyMatchingAgent(t *testing.T) {
 		t.Fatalf("failed to add key to agent: %v", err)
 	}
 
-	// Create an encrypted version of the same key (without passphrase in Key struct).
+	// Create an encrypted version of the same key (without passphrase).
+	// NewKey will extract only the public key, which should match with agent.
 	passphrase := []byte("testpassword")
 	pemBytes := marshalPrivateKeyToPEM(t, priv, passphrase)
 
-	key := &sshprime.Key{
-		Bytes:      pemBytes,
-		Passphrase: nil, // No passphrase - should match with agent
+	key := mustNewKey(t, pemBytes, nil) // No passphrase - extracts public key only
+
+	signers := sshprime.GetSigners([]sshprime.Key{key}, "somehost", false)
+
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
-
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
-	}
-
-	// Verify the agent has our key.
-	signers, err := sshprime.GetAgent().Signers()
-	if err != nil {
-		t.Fatalf("failed to get signers: %v", err)
-	}
-
+	// Verify we got the signer from the agent.
 	found := false
 
 	for _, s := range signers {
@@ -175,11 +170,11 @@ func TestGetAuthMethod_ExplicitEncryptedKeyMatchingAgent(t *testing.T) {
 	}
 
 	if !found {
-		t.Error("expected to find matching key in agent signers")
+		t.Error("expected to find matching key in signers")
 	}
 }
 
-func TestGetAuthMethod_NoAgent(t *testing.T) {
+func TestGetSigners_NoAgent(t *testing.T) {
 	// Set invalid agent socket.
 	t.Setenv("SSH_AUTH_SOCK", "/nonexistent/socket")
 	sshprime.GetAgent().Close()
@@ -188,20 +183,17 @@ func TestGetAuthMethod_NoAgent(t *testing.T) {
 	priv, _ := generateAuthTestKey(t)
 	pemBytes := marshalPrivateKeyToPEM(t, priv, nil)
 
-	key := &sshprime.Key{
-		Bytes:      pemBytes,
-		Passphrase: nil,
-	}
+	key := mustNewKey(t, pemBytes, nil)
 
 	// Should not fail even without agent.
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
+	signers := sshprime.GetSigners([]sshprime.Key{key}, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_PublicKeyOnlyMatchingAgent(t *testing.T) {
+func TestGetSigners_PublicKeyOnlyMatchingAgent(t *testing.T) {
 	// Start test agent.
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -216,19 +208,16 @@ func TestGetAuthMethod_PublicKeyOnlyMatchingAgent(t *testing.T) {
 	// Create a Key with just the public key bytes.
 	pubKeyBytes := pubKey.Marshal()
 
-	key := &sshprime.Key{
-		Bytes:      pubKeyBytes,
-		Passphrase: nil,
-	}
+	key := mustNewKey(t, pubKeyBytes, nil)
 
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
+	signers := sshprime.GetSigners([]sshprime.Key{key}, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_UseConfigFalse_IdentityOnlyTrue(t *testing.T) {
+func TestGetSigners_UseConfigFalse_IdentityOnlyTrue(t *testing.T) {
 	// When useConfig=false, identityOnly defaults to true.
 	// This means only explicit keys are used, not other agent keys.
 	testAgent := testssh.StartTestAgent(t)
@@ -242,22 +231,19 @@ func TestGetAuthMethod_UseConfigFalse_IdentityOnlyTrue(t *testing.T) {
 	priv, _ := generateAuthTestKey(t)
 	pemBytes := marshalPrivateKeyToPEM(t, priv, nil)
 
-	key := &sshprime.Key{
-		Bytes:      pemBytes,
-		Passphrase: nil,
-	}
+	key := mustNewKey(t, pemBytes, nil)
 
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
+	signers := sshprime.GetSigners([]sshprime.Key{key}, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 
 	// The explicit key should be used as a signer directly since it's unencrypted.
 	// The agent key should NOT be included because identityOnly=true when useConfig=false.
 }
 
-func TestGetAuthMethod_MultipleExplicitKeys(t *testing.T) {
+func TestGetSigners_MultipleExplicitKeys(t *testing.T) {
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
 	sshprime.GetAgent().Close()
@@ -269,61 +255,39 @@ func TestGetAuthMethod_MultipleExplicitKeys(t *testing.T) {
 	pem1 := marshalPrivateKeyToPEM(t, priv1, nil)
 	pem2 := marshalPrivateKeyToPEM(t, priv2, []byte("pass2"))
 
-	keys := []*sshprime.Key{
-		{Bytes: pem1, Passphrase: nil},
-		{Bytes: pem2, Passphrase: []byte("pass2")},
+	keys := []sshprime.Key{
+		mustNewKey(t, pem1, nil),
+		mustNewKey(t, pem2, []byte("pass2")),
 	}
 
-	auth := sshprime.GetAuthMethod(keys, "somehost", false)
+	signers := sshprime.GetSigners(keys, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
-	}
-}
-
-func TestGetAuthMethod_InvalidKeyFormat(t *testing.T) {
-	testAgent := testssh.StartTestAgent(t)
-	testAgent.SetEnv()
-	sshprime.GetAgent().Close()
-
-	// Provide invalid key bytes.
-	key := &sshprime.Key{
-		Bytes:      []byte("not a valid key"),
-		Passphrase: nil,
-	}
-
-	// Should not error, just warn and continue.
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
-
-	if auth == nil {
-		t.Fatal("expected non-nil auth method even with invalid key")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_WrongPassphrase(t *testing.T) {
-	testAgent := testssh.StartTestAgent(t)
-	testAgent.SetEnv()
-	sshprime.GetAgent().Close()
+func TestNewKey_InvalidKeyFormat(t *testing.T) {
+	// NewKey should return error for invalid key bytes.
+	_, err := sshprime.NewKey([]byte("not a valid key"), nil, false)
+	if err == nil {
+		t.Fatal("expected error for invalid key format")
+	}
+}
 
+func TestNewKey_WrongPassphrase(t *testing.T) {
 	// Generate encrypted key.
 	priv, _ := generateAuthTestKey(t)
 	pemBytes := marshalPrivateKeyToPEM(t, priv, []byte("correctpassword"))
 
-	// Provide wrong passphrase.
-	key := &sshprime.Key{
-		Bytes:      pemBytes,
-		Passphrase: []byte("wrongpassword"),
-	}
-
-	// Should not error - will fail to decrypt, treat as encrypted without passphrase.
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{key}, "somehost", false)
-
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	// NewKey should return error for wrong passphrase.
+	_, err := sshprime.NewKey(pemBytes, []byte("wrongpassword"), false)
+	if err == nil {
+		t.Fatal("expected error for wrong passphrase")
 	}
 }
 
-func TestGetAuthMethod_IdentityFileOnDisk_Encrypted(t *testing.T) {
+func TestGetSigners_IdentityFileOnDisk_Encrypted(t *testing.T) {
 	// Test loading an encrypted identity file from disk.
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -349,14 +313,14 @@ func TestGetAuthMethod_IdentityFileOnDisk_Encrypted(t *testing.T) {
 	// on disk are handled (public key extracted, matched with agent).
 
 	// For now, just verify the function works with no explicit keys.
-	auth := sshprime.GetAuthMethod(nil, "somehost", false)
+	signers := sshprime.GetSigners(nil, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_EmptyKeys(t *testing.T) {
+func TestGetSigners_EmptyKeys(t *testing.T) {
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
 	sshprime.GetAgent().Close()
@@ -365,14 +329,14 @@ func TestGetAuthMethod_EmptyKeys(t *testing.T) {
 	testAgent.GenerateAndAddKey("agent-key")
 
 	// Call with empty slice (not nil).
-	auth := sshprime.GetAuthMethod([]*sshprime.Key{}, "somehost", false)
+	signers := sshprime.GetSigners([]sshprime.Key{}, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_NilKeys(t *testing.T) {
+func TestGetSigners_NilKeys(t *testing.T) {
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
 	sshprime.GetAgent().Close()
@@ -381,14 +345,14 @@ func TestGetAuthMethod_NilKeys(t *testing.T) {
 	testAgent.GenerateAndAddKey("agent-key")
 
 	// Call with nil slice.
-	auth := sshprime.GetAuthMethod(nil, "somehost", false)
+	signers := sshprime.GetSigners(nil, "somehost", false)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_IdentityFileFromSSHConfig(t *testing.T) {
+func TestGetSigners_IdentityFileFromSSHConfig(t *testing.T) {
 	// Test that IdentityFile directive in SSH config is read and used.
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -427,14 +391,14 @@ func TestGetAuthMethod_IdentityFileFromSSHConfig(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	// Call with withSSHConfig=true for the configured host.
-	auth := sshprime.GetAuthMethod(nil, "testhost.example.com", true)
+	signers := sshprime.GetSigners(nil, "testhost.example.com", true)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }
 
-func TestGetAuthMethod_IdentityFileRefusesUnencrypted(t *testing.T) {
+func TestGetSigners_IdentityFileRefusesUnencrypted(t *testing.T) {
 	// Test that unencrypted identity files on disk are refused.
 	testAgent := testssh.StartTestAgent(t)
 	testAgent.SetEnv()
@@ -468,11 +432,11 @@ func TestGetAuthMethod_IdentityFileRefusesUnencrypted(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	// This should succeed but the unencrypted key should be rejected
-	// (logged as error but not used). The auth method will be returned
+	// (logged as error but not used). The signers will be returned
 	// but without any usable signers from that key.
-	auth := sshprime.GetAuthMethod(nil, "unsafehost.example.com", true)
+	signers := sshprime.GetSigners(nil, "unsafehost.example.com", true)
 
-	if auth == nil {
-		t.Fatal("expected non-nil auth method")
+	if signers == nil {
+		t.Fatal("expected non-nil signers")
 	}
 }

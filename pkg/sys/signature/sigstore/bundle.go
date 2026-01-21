@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/farcloser/quark/dev/trust"
-	"github.com/farcloser/quark/internal/types"
-	v1 "github.com/in-toto/attestation/go/v1"
+	"github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	sigstoresig "github.com/sigstore/sigstore/pkg/signature"
+
+	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/core/trust"
 )
 
 /*
@@ -79,6 +80,7 @@ func (sb *sigstoreBundle) Timestamp() *time.Time {
 
 	// Use the first tlog entry's integrated time.
 	integratedTime := entries[0].IntegratedTime()
+
 	return &integratedTime
 }
 
@@ -168,7 +170,7 @@ func (sb *sigstoreBundle) Verify() (signerInfo *types.KeylessSignerInfo, err err
 	}
 
 	if result == nil || result.Signature == nil || result.Signature.Certificate == nil {
-		return nil, nil
+		return nil, errVerificationFailedNothing
 	}
 
 	cert := result.Signature.Certificate

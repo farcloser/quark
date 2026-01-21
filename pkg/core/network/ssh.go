@@ -41,4 +41,13 @@ var (
 	// DefaultSSHKeepaliveTimeout is how long to wait for a keepalive response before
 	// considering the connection dead.
 	DefaultSSHKeepaliveTimeout = 15 * time.Second
+
+	// DefaultIdentityFiles defines the well-known private key we might consider.
+	DefaultIdentityFiles = []string{
+		// "~/.ssh/id_rsa",
+		// "~/.ssh/id_ecdsa",
+		// "~/.ssh/id_ecdsa_sk",
+		"~/.ssh/id_ed25519",
+		"~/.ssh/id_ed25519_sk",
+	}
 )

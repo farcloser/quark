@@ -8,8 +8,8 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/farcloser/quark/internal/signature/sigstore"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/sys/signature/sigstore"
 	testcosign "github.com/farcloser/quark/testutil/cosign"
 )
 
@@ -24,6 +24,7 @@ func TestAttestation_ReadBundle(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation with custom predicate.
@@ -56,6 +57,7 @@ func TestAttestation_VerifyWithKey(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation.
@@ -128,6 +130,7 @@ func TestAttestation_RejectsSignatureType(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Sign an image (creates a signature, not an attestation).
@@ -153,6 +156,7 @@ func TestAttestation_PayloadContainsSubjects(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation.
@@ -185,6 +189,7 @@ func TestAttestation_PayloadContainsPredicate(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation with specific predicate data.
@@ -206,6 +211,7 @@ func TestAttestation_PayloadContainsPredicate(t *testing.T) {
 	assert.Assert(t, ok, "predicate should be json.RawMessage")
 
 	var predicateData map[string]any
+
 	err = json.Unmarshal(predicateBytes, &predicateData)
 	assert.NilError(t, err, "unmarshal predicate")
 
@@ -214,6 +220,7 @@ func TestAttestation_PayloadContainsPredicate(t *testing.T) {
 	dataStr, hasData := predicateData["Data"].(string)
 	if hasData {
 		var innerData map[string]any
+
 		err = json.Unmarshal([]byte(dataStr), &innerData)
 		assert.NilError(t, err, "unmarshal inner predicate data")
 		assert.Assert(t, innerData["buildInfo"] != nil, "predicate.Data should contain buildInfo")
@@ -233,6 +240,7 @@ func TestAttestation_Annotations(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation.
@@ -309,6 +317,7 @@ func TestAttestation_TamperedPredicate(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation.
@@ -399,6 +408,7 @@ func TestAttestation_TamperedSubject(t *testing.T) {
 	// Generate key pair.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Create an attestation.
@@ -448,6 +458,7 @@ func TestAttestation_InvalidJSON(t *testing.T) {
 	// Generate a valid attestation to get the expected media type.
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	predicate := []byte(`{}`)

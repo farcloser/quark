@@ -16,8 +16,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"golang.org/x/crypto/ssh"
 
+	"github.com/farcloser/quark/pkg/core/sshprime"
 	"github.com/farcloser/quark/pkg/fault"
 )
 
@@ -31,6 +31,7 @@ type Repo struct {
 type Author struct {
 	Name  string
 	Email string
+	Key   sshprime.Key
 }
 
 // Commit represents a git commit.
@@ -165,9 +166,49 @@ func (r *Repo) AddRemote(name, url string) error {
 	return nil
 }
 
+// RemoteURL returns the fetch URL for the named remote.
+// Returns an error if the remote doesn't exist or has no URLs.
+func (r *Repo) RemoteURL(name string) (string, error) {
+	remote, err := r.repo.Remote(name)
+	if err != nil {
+		return "", fmt.Errorf("get remote %s: %w", name, err)
+	}
+
+	cfg := remote.Config()
+	if len(cfg.URLs) == 0 {
+		return "", fmt.Errorf("remote %s: %w", name, ErrRemoteNoURLs)
+	}
+
+	return cfg.URLs[0], nil
+}
+
+// RemoteHead returns the commit hash of the remote tracking branch.
+// Returns empty string if the remote branch doesn't exist (e.g., never fetched).
+func (r *Repo) RemoteHead(remote, branch string) (string, error) {
+	ref, err := r.repo.Reference(
+		plumbing.NewRemoteReferenceName(remote, branch),
+		true,
+	)
+	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return "", nil
+		}
+
+		return "", fmt.Errorf("get remote ref %s/%s: %w", remote, branch, err)
+	}
+
+	return ref.Hash().String(), nil
+}
+
 // CreateEmptyCommit creates a signed empty commit with the given message.
 // The commit has no file changes, only a message and signature.
-func (r *Repo) CreateEmptyCommit(message string, author Author, signer ssh.Signer, when time.Time) (string, error) {
+// Signing is mandatory - the signer is resolved from author.Key or git config.
+func (r *Repo) CreateEmptyCommit(message string, author *Author, when time.Time) (string, error) {
+	signer, err := r.resolveSigner(author.Key)
+	if err != nil {
+		return "", fmt.Errorf("resolve signer: %w", err)
+	}
+
 	// Get the worktree to access commit functionality.
 	worktree, err := r.repo.Worktree()
 	if err != nil {
@@ -180,11 +221,8 @@ func (r *Repo) CreateEmptyCommit(message string, author Author, signer ssh.Signe
 			Email: author.Email,
 			When:  when,
 		},
+		Signer:            newSSHSigner(signer),
 		AllowEmptyCommits: true,
-	}
-
-	if signer != nil {
-		opts.Signer = newSSHSigner(signer)
 	}
 
 	hash, err := worktree.Commit(message, opts)

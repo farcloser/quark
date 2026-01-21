@@ -8,6 +8,7 @@ var (
 	errFailedCreatingPolicy      = errors.New("failed to create signature identity policy")
 	errKeyVerificationFailed     = errors.New("sigstore key-based signature verification failed")
 	errKeylessVerificationFailed = errors.New("sigstore keyless signature verification failed")
+	errVerificationFailedNothing = errors.New("sigstore signature verification failed (no result)")
 
 	errUnrecognizedMediaType      = errors.New("unrecognized media type")
 	errFailedParsingBundle        = errors.New("failed to parse bundle")
@@ -16,6 +17,6 @@ var (
 	errUnrecognizedPredicateType  = errors.New("unrecognized predicate type")
 	errFailedMarshallingPredicate = errors.New("failed to marshal predicate")
 
-	errFailedParsingLegacySignature    = errors.New("failed to parse legacy signature")
+	errFailedParsingLegacySignature   = errors.New("failed to parse legacy signature")
 	errFailedParsingLegacyAttestation = errors.New("failed to parse legacy attestation")
 )

@@ -1,7 +1,7 @@
 package defaults
 
 import (
-	"github.com/farcloser/quark/dev/network"
+	"github.com/farcloser/quark/pkg/core/network"
 )
 
 // SetDefaultsForNetwork configures http.DefaultTransport with secure defaults

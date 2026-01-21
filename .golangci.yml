@@ -167,8 +167,14 @@ linters:
           - dupword
           - wrapcheck
           - gosec
+          - err113
+          - modernize
+          - dogsled
+          - noctx
+          - perfsprint
+          - depguard
       - path: _test.go
-        text: "add-constant|cognitive-complexity|confusing-results|nested-structs"
+        text: "add-constant|cognitive-complexity|confusing-results|nested-structs|use-waitgroup-go|unchecked-type-assertion|unhandled-error|unused-receiver"
         linters:
           - revive
 
@@ -270,20 +276,24 @@ linters:
             - github.com/google/go-containerregistry
             # Sigstore
             - github.com/sigstore/sigstore-go
-            - github.com/sigstore/sigstore/pkg/cryptoutils
             - github.com/sigstore/sigstore/pkg/signature
             - github.com/sigstore/protobuf-specs
             - github.com/sigstore/rekor
+            - github.com/in-toto/attestation/go/v1
+            - github.com/in-toto/in-toto-golang/in_toto
             # Godolint
             - github.com/farcloser/godolint
             # Distribution
             - github.com/distribution/reference
             - github.com/opencontainers/go-digest
+            # Git
+            - github.com/go-git/go-git
             # SSH
             - golang.org/x/crypto/ssh
             - github.com/kevinburke/ssh_config
             - github.com/pkg/sftp
             # Crypto
+            - golang.org/x/crypto/blake2b
             - golang.org/x/crypto/nacl/secretbox
             - golang.org/x/crypto/scrypt
             # Secrets
@@ -301,6 +311,7 @@ linters:
             # Dockle config analysis
             - github.com/goodwithtech/dockle
             - github.com/goodwithtech/deckoder
+        # cli and term only allowed in main
         no-main-leak:
           files:
             - $all
@@ -308,6 +319,36 @@ linters:
           deny:
             - pkg: github.com/urfave/cli
             - pkg: golang.org/x/term
+
+        # crypto and filesystem primitives restricted to core
+        no-core-leak:
+          files:
+            - $all
+            - "!**/pkg/core/**"
+            # Because of go-git, we cannot truly seal some of the implementation details in core/ssh, that leaks into dev/ssh
+            - "!**/pkg/dev/ssh/client.go"
+          deny:
+            - pkg: go.farcloser.world/core
+            - pkg: github.com/go-git/go-git
+            - pkg: golang.org/x/crypto/ssh
+            - pkg: github.com/kevinburke/ssh_config
+            - pkg: github.com/pkg/sftp
+            - pkg: golang.org/x/crypto/nacl/secretbox
+            - pkg: golang.org/x/crypto/scrypt
+            - pkg: golang.org/x/crypto/blake2b
+
+        no-sigstore-leak:
+          files:
+            - $all
+            - "!**/pkg/sys/signature/sigstore/**"
+            - "!**/pkg/sys/signature/cosign/**"
+          deny:
+            - pkg: github.com/sigstore/sigstore-go
+            - pkg: github.com/sigstore/sigstore/pkg/signature
+            - pkg: github.com/sigstore/protobuf-specs
+            - pkg: github.com/sigstore/rekor
+            - pkg: github.com/in-toto/attestation/go/v1
+            - pkg: github.com/in-toto/in-toto-golang/in_toto
 
         no-go-containerregistry-leak:
           files:
@@ -318,16 +359,6 @@ linters:
             - "!**/internal/syft/**"
           deny:
             - pkg: github.com/google/go-containerregistry
-        no-sigstore-leak:
-          files:
-            - $all
-            - "!**/internal/sigstore/**"
-          deny:
-            - pkg: github.com/sigstore/sigstore-go
-            - pkg: github.com/sigstore/sigstore/pkg/cryptoutils
-            - pkg: github.com/sigstore/sigstore/pkg/signature
-            - pkg: github.com/sigstore/protobuf-specs
-            - pkg: github.com/sigstore/rekor
         no-godolint-leak:
           files:
             - $all
@@ -343,21 +374,6 @@ linters:
           deny:
             - pkg: github.com/distribution/reference
             - pkg: github.com/opencontainers/go-digest
-        no-ssh-leak:
-          files:
-            - $all
-            - "!**/dev/ssh/**"
-          deny:
-            - pkg: golang.org/x/crypto/ssh
-            - pkg: github.com/kevinburke/ssh_config
-            - pkg: github.com/pkg/sftp
-        no-crypto-leak:
-          files:
-            - $all
-            - "!**/dev/trust/**"
-          deny:
-            - pkg: golang.org/x/crypto/nacl/secretbox
-            - pkg: golang.org/x/crypto/scrypt
         no-age-leak:
           files:
             - $all

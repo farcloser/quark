@@ -9,23 +9,10 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/farcloser/quark/internal/signature/sigstore"
 	"github.com/farcloser/quark/internal/types"
+	sigstore2 "github.com/farcloser/quark/pkg/sys/signature/sigstore"
 	testcosign "github.com/farcloser/quark/testutil/cosign"
 )
-
-// extractMediaType extracts the mediaType field from a sigstore bundle JSON.
-func extractMediaType(bundle []byte) types.MediaType {
-	var b struct {
-		MediaType string `json:"mediaType"`
-	}
-
-	if err := json.Unmarshal(bundle, &b); err != nil {
-		return ""
-	}
-
-	return types.MediaType(b.MediaType)
-}
 
 // TestReadSignature_CosignGeneratedBundle tests ReadSignature with a real cosign-generated bundle.
 // This test requires cosign and crane CLIs, and network access to ttl.sh.
@@ -47,7 +34,7 @@ func TestSignature_ReadBundle(t *testing.T) {
 	assert.NilError(t, err, "SignImage")
 
 	// Create signer without trusted root (no Rekor verification).
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 
 	// Read the signature using the media type from cosign.
 	sig, err := signer.ReadSignature(signedImage.Bundle, nil, types.MediaType(signedImage.MediaType))
@@ -77,7 +64,7 @@ func TestSignature_ReadBundle(t *testing.T) {
 func TestSignature_InvalidMediaType(t *testing.T) {
 	t.Parallel()
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 
 	_, err := signer.ReadSignature([]byte(`{}`), nil, types.MediaType("application/json"))
 	assert.Assert(t, err != nil, "ReadSignature should fail with invalid media type")
@@ -102,7 +89,7 @@ func TestSignature_InvalidJSON(t *testing.T) {
 	signedImage, err := testcosign.SignImage(keyPair, false)
 	assert.NilError(t, err, "SignImage")
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 
 	// Use the media type from cosign with invalid JSON.
 	_, err = signer.ReadSignature([]byte(`not json`), nil, types.MediaType(signedImage.MediaType))
@@ -128,7 +115,7 @@ func TestSignature_EmptyBundle(t *testing.T) {
 	signedImage, err := testcosign.SignImage(keyPair, false)
 	assert.NilError(t, err, "SignImage")
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 
 	// Use the media type from cosign with empty JSON.
 	_, err = signer.ReadSignature([]byte(`{}`), nil, types.MediaType(signedImage.MediaType))
@@ -156,7 +143,7 @@ func TestSignature_RejectsAttestationType(t *testing.T) {
 	attested, err := testcosign.AttestImage(keyPair, "custom", predicate, false)
 	assert.NilError(t, err, "AttestImage")
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 
 	// ReadSignature should reject attestation predicate types.
 	_, err = signer.ReadSignature(attested.Bundle, nil, types.MediaType(attested.MediaType))
@@ -188,7 +175,7 @@ func TestSignature_VerifyWithKey(t *testing.T) {
 	assert.NilError(t, err, "ReadPublicKey")
 
 	// Create signer and read signature.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(signedImage.Bundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -208,10 +195,12 @@ func TestSignature_VerifyWithWrongKey(t *testing.T) {
 	// Generate two key pairs.
 	keyPair1, err := testcosign.GenerateKeyPair("test1")
 	assert.NilError(t, err, "GenerateKeyPair 1")
+
 	defer keyPair1.Cleanup()
 
 	keyPair2, err := testcosign.GenerateKeyPair("test2")
 	assert.NilError(t, err, "GenerateKeyPair 2")
+
 	defer keyPair2.Cleanup()
 
 	// Sign with key pair 1.
@@ -223,7 +212,7 @@ func TestSignature_VerifyWithWrongKey(t *testing.T) {
 	assert.NilError(t, err, "ReadPublicKey")
 
 	// Create signer and read signature.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(signedImage.Bundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -253,7 +242,7 @@ func TestSignature_VerifyWithInvalidKey(t *testing.T) {
 	assert.NilError(t, err, "SignImage")
 
 	// Create signer and read signature.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(signedImage.Bundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -287,7 +276,7 @@ func TestSignature_Annotations(t *testing.T) {
 		"custom.annotation/key": "value",
 	}
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(signedImage.Bundle, annotations, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -320,7 +309,7 @@ func TestSignature_ReservedAnnotationsFiltered(t *testing.T) {
 		"custom.key":                    "should-be-kept",
 	}
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(signedImage.Bundle, annotations, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -349,7 +338,7 @@ func TestSignature_DigestFromBundle(t *testing.T) {
 	signedImage, err := testcosign.SignImage(keyPair, false)
 	assert.NilError(t, err, "SignImage")
 
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(signedImage.Bundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -363,6 +352,7 @@ func TestSignature_DigestFromBundle(t *testing.T) {
 			Payload string `json:"payload"`
 		} `json:"dsseEnvelope"`
 	}
+
 	err = json.Unmarshal(signedImage.Bundle, &bundle)
 	assert.NilError(t, err, "unmarshal bundle")
 
@@ -374,6 +364,7 @@ func TestSignature_DigestFromBundle(t *testing.T) {
 			Digest map[string]string `json:"digest"`
 		} `json:"subject"`
 	}
+
 	err = json.Unmarshal(payloadBytes, &statement)
 	assert.NilError(t, err, "unmarshal statement")
 
@@ -391,7 +382,7 @@ func TestSignature_VerifyWithRekor(t *testing.T) {
 	t.Parallel()
 
 	// Fetch public Sigstore trusted root.
-	root := sigstore.NewRoot("")
+	root := sigstore2.NewRoot("")
 	err := root.FromNetwork()
 	assert.NilError(t, err, "FromNetwork")
 	assert.Assert(t, root.Get() != nil, "trusted root should not be nil")
@@ -411,7 +402,7 @@ func TestSignature_VerifyWithRekor(t *testing.T) {
 	assert.NilError(t, err, "ReadPublicKey")
 
 	// Create signer with trusted root for Rekor verification.
-	signer := sigstore.NewSigner(root.Get())
+	signer := sigstore2.NewSigner(root.Get())
 	sig, err := signer.ReadSignature(signedImage.Bundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -578,7 +569,7 @@ func TestSignature_TamperedSubjectDigest(t *testing.T) {
 	assert.NilError(t, err, "tamperSubjectDigest")
 
 	// Read the tampered signature.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(tamperedBundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature should succeed (tampering not detected at parse time)")
 
@@ -614,7 +605,7 @@ func TestSignature_TamperedSignature(t *testing.T) {
 	assert.NilError(t, err, "tamperSignature")
 
 	// Read the tampered signature.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(tamperedBundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature should succeed (tampering not detected at parse time)")
 
@@ -650,7 +641,7 @@ func TestSignature_RemovedSignature(t *testing.T) {
 	assert.NilError(t, err, "removeSignature")
 
 	// Reading may succeed (sigstore-go parses structure without validating signature count).
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig, err := signer.ReadSignature(tamperedBundle, nil, types.MediaType(signedImage.MediaType))
 	assert.NilError(t, err, "ReadSignature")
 
@@ -683,7 +674,7 @@ func TestSignature_CorruptedPayload(t *testing.T) {
 	assert.NilError(t, err, "corruptPayload")
 
 	// Reading should fail - payload is not valid JSON.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	_, err = signer.ReadSignature(tamperedBundle, nil, types.MediaType(signedImage.MediaType))
 	assert.Assert(t, err != nil, "ReadSignature should fail with corrupted payload")
 	assert.Assert(t, errors.Is(err, types.ErrBundleReadFailed),
@@ -715,7 +706,7 @@ func TestSignature_ReplayAttack(t *testing.T) {
 	assert.NilError(t, err, "ReadPublicKey")
 
 	// Read both signatures.
-	signer := sigstore.NewSigner(nil)
+	signer := sigstore2.NewSigner(nil)
 	sig1, err := signer.ReadSignature(signedImage1.Bundle, nil, types.MediaType(signedImage1.MediaType))
 	assert.NilError(t, err, "ReadSignature 1")
 

@@ -7,9 +7,9 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/farcloser/quark/internal/signature/cosign"
-	"github.com/farcloser/quark/internal/signature/sigstore"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/sys/signature/cosign"
+	"github.com/farcloser/quark/pkg/sys/signature/sigstore"
 	testcosign "github.com/farcloser/quark/testutil/cosign"
 )
 
@@ -23,6 +23,7 @@ func TestLegacySignature_Convert(t *testing.T) {
 
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Sign image with legacy format.
@@ -37,6 +38,7 @@ func TestLegacySignature_Convert(t *testing.T) {
 
 	// Verify the bundle is valid JSON.
 	var bundle map[string]any
+
 	err = json.Unmarshal(bundleBytes, &bundle)
 	assert.NilError(t, err, "bundle should be valid JSON")
 
@@ -56,6 +58,7 @@ func TestLegacySignature_VerifyWithKey(t *testing.T) {
 
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Sign image with legacy format.
@@ -86,10 +89,12 @@ func TestLegacySignature_VerifyWithWrongKey(t *testing.T) {
 
 	keyPair1, err := testcosign.GenerateKeyPair("test1")
 	assert.NilError(t, err, "GenerateKeyPair 1")
+
 	defer keyPair1.Cleanup()
 
 	keyPair2, err := testcosign.GenerateKeyPair("test2")
 	assert.NilError(t, err, "GenerateKeyPair 2")
+
 	defer keyPair2.Cleanup()
 
 	// Sign image with legacy format using key pair 1.
@@ -127,7 +132,9 @@ func TestLegacySignature_InvalidPayload(t *testing.T) {
 func TestLegacySignature_MissingSignature(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"critical":{"identity":{"docker-reference":"test"},"image":{"docker-manifest-digest":"sha256:abc"},"type":"cosign container image signature"},"optional":{}}`)
+	payload := []byte(
+		`{"critical":{"identity":{"docker-reference":"test"},"image":{"docker-manifest-digest":"sha256:abc"},"type":"cosign container image signature"},"optional":{}}`,
+	)
 	annotations := map[string]string{}
 
 	_, _, err := cosign.Convert(payload, annotations)
@@ -138,7 +145,9 @@ func TestLegacySignature_MissingSignature(t *testing.T) {
 func TestLegacySignature_InvalidBase64(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{"critical":{"identity":{"docker-reference":"test"},"image":{"docker-manifest-digest":"sha256:abc"},"type":"cosign container image signature"},"optional":{}}`)
+	payload := []byte(
+		`{"critical":{"identity":{"docker-reference":"test"},"image":{"docker-manifest-digest":"sha256:abc"},"type":"cosign container image signature"},"optional":{}}`,
+	)
 	annotations := map[string]string{
 		testcosign.AnnotationSignature: "not-valid-base64!!!",
 	}
@@ -157,6 +166,7 @@ func TestLegacySignature_PreservesAnnotations(t *testing.T) {
 
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Sign image with legacy format.
@@ -168,6 +178,7 @@ func TestLegacySignature_PreservesAnnotations(t *testing.T) {
 	for k, v := range signed.Annotations {
 		customAnnotations[k] = v
 	}
+
 	customAnnotations["custom.annotation/key"] = "custom-value"
 
 	// Read the signature directly with legacy media type and custom annotations.
@@ -191,6 +202,7 @@ func TestLegacySignature_ReadWithLegacyMediaType(t *testing.T) {
 
 	keyPair, err := testcosign.GenerateKeyPair("test")
 	assert.NilError(t, err, "GenerateKeyPair")
+
 	defer keyPair.Cleanup()
 
 	// Sign image with legacy format.

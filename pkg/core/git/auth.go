@@ -20,11 +20,11 @@ import (
 type SSHAuth struct {
 	endpoint      string
 	fingerprint   string
-	key           *sshprime.Key
+	key           sshprime.Key
 	withSSHConfig bool
 }
 
-// NewSSHAuth creates an SSH auth method with hardened settings.
+// NewSSHAuth creates an SSH auth method with hardened settings and wired key management.
 //
 // Parameters:
 //   - endpoint: SSH host (can be ~/.ssh/config alias, hostname, or user@host)
@@ -32,7 +32,7 @@ type SSHAuth struct {
 //   - key: Optional SSH key for authentication
 //
 // If fingerprint is empty, ~/.ssh/known_hosts is used for host verification.
-func NewSSHAuth(endpoint, fingerprint string, key *sshprime.Key, withSSHConfig bool) *SSHAuth {
+func NewSSHAuth(endpoint, fingerprint string, key sshprime.Key, withSSHConfig bool) *SSHAuth {
 	return &SSHAuth{
 		endpoint:      endpoint,
 		fingerprint:   fingerprint,
@@ -66,9 +66,9 @@ func (a *SSHAuth) ClientConfig() (*ssh.ClientConfig, error) {
 	}
 
 	// Build keys slice if key is provided
-	var keys []*sshprime.Key
+	var keys []sshprime.Key
 	if a.key != nil {
-		keys = []*sshprime.Key{a.key}
+		keys = []sshprime.Key{a.key}
 	}
 
 	cfg, err := sshprime.GetClientConfig(keys, endpoint, a.withSSHConfig)
