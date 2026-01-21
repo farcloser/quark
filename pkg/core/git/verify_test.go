@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/pem"
 	"testing"
 	"time"
 
@@ -122,6 +123,23 @@ func armorSignature(blob []byte) string {
 	return "-----BEGIN SSH SIGNATURE-----\n" + encoded + "\n-----END SSH SIGNATURE-----"
 }
 
+// generateVerifyTestKey generates an ed25519 key and returns it as PEM bytes for testing.
+func generateVerifyTestKey(t *testing.T) (ed25519.PublicKey, []byte) {
+	t.Helper()
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("failed to marshal private key: %v", err)
+	}
+
+	return pub, pem.EncodeToMemory(block)
+}
+
 // TestGetCommitSignerUnsignedCommit tests that unsigned commits return errNoSignature.
 func TestGetCommitSignerUnsignedCommit(t *testing.T) {
 	t.Parallel()
@@ -131,13 +149,8 @@ func TestGetCommitSignerUnsignedCommit(t *testing.T) {
 	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	hash, err := repo.CreateEmptyCommit(
-		"unsigned commit",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create an unsigned commit using the low-level helper (simulates legacy unsigned commits).
+	hash := createCommitWithSignature(t, dir, "")
 
 	_, err = repo.GetCommitSigner(hash)
 	assert.ErrorIs(t, err, git.ErrSignatureMissing)
@@ -152,10 +165,15 @@ func TestGetCommitSignerInvalidHash(t *testing.T) {
 	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
+	_, keyBytes := generateVerifyTestKey(t)
+
 	_, err = repo.CreateEmptyCommit(
 		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes),
+		},
 		time.Now(),
 	)
 	assert.NilError(t, err)
@@ -173,16 +191,15 @@ func TestGetCommitSignerSignedCommit(t *testing.T) {
 	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	assert.NilError(t, err)
-
-	sshSigner, err := ssh.NewSignerFromKey(privateKey)
-	assert.NilError(t, err)
+	_, keyBytes := generateVerifyTestKey(t)
 
 	hash, err := repo.CreateEmptyCommit(
 		"signed commit",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		sshSigner,
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes),
+		},
 		time.Now(),
 	)
 	assert.NilError(t, err)
@@ -203,16 +220,15 @@ func TestGetCommitSignerFingerprintMatchesKey(t *testing.T) {
 	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	assert.NilError(t, err)
-
-	sshSigner, err := ssh.NewSignerFromKey(privateKey)
-	assert.NilError(t, err)
+	publicKey, keyBytes := generateVerifyTestKey(t)
 
 	hash, err := repo.CreateEmptyCommit(
 		"signed commit",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		sshSigner,
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes),
+		},
 		time.Now(),
 	)
 	assert.NilError(t, err)
@@ -236,30 +252,27 @@ func TestGetCommitSignerMultipleCommits(t *testing.T) {
 	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	_, privateKey1, err := ed25519.GenerateKey(rand.Reader)
-	assert.NilError(t, err)
-
-	sshSigner1, err := ssh.NewSignerFromKey(privateKey1)
-	assert.NilError(t, err)
-
-	_, privateKey2, err := ed25519.GenerateKey(rand.Reader)
-	assert.NilError(t, err)
-
-	sshSigner2, err := ssh.NewSignerFromKey(privateKey2)
-	assert.NilError(t, err)
+	_, keyBytes1 := generateVerifyTestKey(t)
+	_, keyBytes2 := generateVerifyTestKey(t)
 
 	hash1, err := repo.CreateEmptyCommit(
 		"commit 1",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		sshSigner1,
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes1),
+		},
 		time.Now(),
 	)
 	assert.NilError(t, err)
 
 	hash2, err := repo.CreateEmptyCommit(
 		"commit 2",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		sshSigner2,
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes2),
+		},
 		time.Now(),
 	)
 	assert.NilError(t, err)
@@ -279,20 +292,11 @@ func TestGetCommitSignerMissingBeginMarker(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
 	// Create initial commit so repo has a tree.
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	createCommitWithSignature(t, dir, "")
 
 	// Signature without BEGIN marker.
 	hash := createCommitWithSignature(t, dir, "U1NI\n-----END SSH SIGNATURE-----")
@@ -307,19 +311,11 @@ func TestGetCommitSignerMissingEndMarker(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Signature without END marker.
 	hash := createCommitWithSignature(t, dir, "-----BEGIN SSH SIGNATURE-----\nU1NI")
@@ -334,19 +330,11 @@ func TestGetCommitSignerMalformedArmor(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// END before BEGIN.
 	hash := createCommitWithSignature(t, dir, "-----END SSH SIGNATURE----------BEGIN SSH SIGNATURE-----")
@@ -361,19 +349,11 @@ func TestGetCommitSignerInvalidBase64(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Invalid base64 content.
 	hash := createCommitWithSignature(t, dir, "-----BEGIN SSH SIGNATURE-----\n!!invalid!!\n-----END SSH SIGNATURE-----")
@@ -388,19 +368,11 @@ func TestGetCommitSignerInvalidMagic(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Valid armor but wrong magic in blob.
 	blob := []byte("NOTMAGIC")
@@ -416,19 +388,11 @@ func TestGetCommitSignerUnsupportedVersion(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Valid magic but wrong version.
 	var blob []byte
@@ -448,19 +412,11 @@ func TestGetCommitSignerUnsupportedHashAlgo(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Generate a key for the blob.
 	pubKey, _, err := ed25519.GenerateKey(rand.Reader)
@@ -505,19 +461,11 @@ func TestGetCommitSignerTruncatedBlob(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Valid magic and version but truncated after that.
 	var blob []byte
@@ -538,19 +486,11 @@ func TestGetCommitSignerWrongNamespace(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Generate a key for the blob.
 	pubKey, _, err := ed25519.GenerateKey(rand.Reader)
@@ -600,19 +540,11 @@ func TestGetCommitSignerSignatureVerificationFailed(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Generate a key for the blob.
 	pubKey, _, err := ed25519.GenerateKey(rand.Reader)
@@ -637,19 +569,11 @@ func TestGetCommitSignerBlobTooShort(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Blob shorter than "SSHSIG" (6 bytes).
 	blob := []byte("SSH")
@@ -667,19 +591,11 @@ func TestGetCommitSignerStringFieldTooLong(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Build blob with a public key length field claiming 1MB.
 	// This should be rejected before attempting to allocate.
@@ -704,19 +620,11 @@ func TestGetCommitSignerEmptyArmorContent(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Empty content between markers.
 	hash := createCommitWithSignature(t, dir, "-----BEGIN SSH SIGNATURE----------END SSH SIGNATURE-----")
@@ -731,19 +639,11 @@ func TestGetCommitSignerArmorWithWhitespace(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// "SSHSIG" in base64 is "U1NISUc=" - add spaces and newlines.
 	// This should still parse (spaces/newlines stripped) but fail on version check.
@@ -765,18 +665,16 @@ func TestGetCommitSignerArmorWithLeadingContent(t *testing.T) {
 	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	// Generate a real signature to test leading content handling.
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	assert.NilError(t, err)
-
-	sshSigner, err := ssh.NewSignerFromKey(privateKey)
-	assert.NilError(t, err)
+	_, keyBytes := generateVerifyTestKey(t)
 
 	// Create a properly signed commit first to get a valid signature.
 	hash, err := repo.CreateEmptyCommit(
 		"signed",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		sshSigner,
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes),
+		},
 		time.Now(),
 	)
 	assert.NilError(t, err)
@@ -794,19 +692,11 @@ func TestGetCommitSignerMaxUint32Length(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Build blob with max uint32 length field.
 	var blob []byte
@@ -830,19 +720,11 @@ func TestGetCommitSignerMalformedPublicKey(t *testing.T) {
 
 	dir := t.TempDir()
 
-	_, err := git.Init(dir)
+	repo, err := git.Init(dir)
 	assert.NilError(t, err)
 
-	repo, err := git.Open(dir, nil)
-	assert.NilError(t, err)
-
-	_, err = repo.CreateEmptyCommit(
-		"initial",
-		git.Author{Name: "Test", Email: "test@example.com"},
-		nil,
-		time.Now(),
-	)
-	assert.NilError(t, err)
+	// Create initial commit so repo has a tree.
+	createCommitWithSignature(t, dir, "")
 
 	// Build blob with garbage public key data.
 	var blob []byte
@@ -859,4 +741,65 @@ func TestGetCommitSignerMalformedPublicKey(t *testing.T) {
 
 	_, err = repo.GetCommitSigner(hash)
 	assert.ErrorIs(t, err, git.ErrSignatureInvalidFormat)
+}
+
+// TestIsSigned_SignedCommit tests that IsSigned returns true for signed commits.
+func TestIsSigned_SignedCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	repo, err := git.Init(dir)
+	assert.NilError(t, err)
+
+	_, keyBytes := generateVerifyTestKey(t)
+
+	hash, err := repo.CreateEmptyCommit(
+		"signed commit",
+		&git.Author{
+			Name:  "Test",
+			Email: "test@example.com",
+			Key:   mustNewKey(t, keyBytes),
+		},
+		time.Now(),
+	)
+	assert.NilError(t, err)
+
+	signed, err := repo.IsSigned(hash)
+	assert.NilError(t, err)
+	assert.Assert(t, signed, "IsSigned should return true for signed commit")
+}
+
+// TestIsSigned_UnsignedCommit tests that IsSigned returns false for unsigned commits.
+func TestIsSigned_UnsignedCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	repo, err := git.Init(dir)
+	assert.NilError(t, err)
+
+	// Create an unsigned commit using the low-level helper (simulates legacy unsigned commits).
+	hash := createCommitWithSignature(t, dir, "")
+
+	signed, err := repo.IsSigned(hash)
+	assert.NilError(t, err)
+	assert.Assert(t, !signed, "IsSigned should return false for unsigned commit")
+}
+
+// TestIsSigned_NonExistentCommit tests that IsSigned returns error for non-existent commits.
+func TestIsSigned_NonExistentCommit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	repo, err := git.Init(dir)
+	assert.NilError(t, err)
+
+	// Create an initial commit so the repo isn't empty.
+	createCommitWithSignature(t, dir, "")
+
+	// Try to check a non-existent commit hash.
+	_, err = repo.IsSigned("0000000000000000000000000000000000000000")
+	assert.ErrorIs(t, err, git.ErrSignatureNoSuchCommit)
 }

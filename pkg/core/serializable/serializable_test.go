@@ -361,3 +361,235 @@ func TestConfigToString_QuotedValuesEscapesQuotes(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
+
+// Tests for numeric types.
+
+func TestConfigToString_IntTypes(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Count int `quark:"count"`
+	}
+
+	s := testStruct{
+		Count: 42,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	expected := "count42 "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_NegativeInt(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Value int `quark:"value"`
+	}
+
+	s := testStruct{
+		Value: -123,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	expected := "value-123 "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_UintType(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Port uint16 `quark:"port"`
+	}
+
+	s := testStruct{
+		Port: 8080,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	expected := "port8080 "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_Float64Type(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Ratio float64 `quark:"ratio"`
+	}
+
+	s := testStruct{
+		Ratio: 3.14,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	expected := "ratio3.14 "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_Float32Type(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Value float32 `quark:"value"`
+	}
+
+	s := testStruct{
+		Value: 2.5,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	expected := "value2.5 "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+// Tests for unsupported types - documenting current behavior.
+// The serializable package supports string, bool, int, uint, and float types.
+// Unsupported types (slices, maps, structs, pointers) produce empty string values.
+
+func TestConfigToString_UnsupportedType_Slice(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Items []string `quark:"items"`
+	}
+
+	s := testStruct{
+		Items: []string{"a", "b", "c"},
+	}
+
+	result := serializable.ConfigToString(s)
+
+	// Slice fields produce empty value (unsupported type)
+	expected := "items "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_UnsupportedType_Map(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Data map[string]string `quark:"data"`
+	}
+
+	s := testStruct{
+		Data: map[string]string{"key": "value"},
+	}
+
+	result := serializable.ConfigToString(s)
+
+	// Map fields produce empty value (unsupported type)
+	expected := "data "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_UnsupportedType_NestedStruct(t *testing.T) {
+	t.Parallel()
+
+	type nested struct {
+		Inner string
+	}
+
+	type testStruct struct {
+		Nested nested `quark:"nested"`
+	}
+
+	s := testStruct{
+		Nested: nested{Inner: "value"},
+	}
+
+	result := serializable.ConfigToString(s)
+
+	// Nested struct fields produce empty value (unsupported type)
+	expected := "nested "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_UnsupportedType_Pointer(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Ptr *string `quark:"ptr"`
+	}
+
+	value := "pointed"
+	s := testStruct{
+		Ptr: &value,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	// Pointer fields produce empty value (unsupported type)
+	expected := "ptr "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_UnsupportedType_NilPointer(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Ptr *string `quark:"ptr"`
+	}
+
+	s := testStruct{
+		Ptr: nil,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	// Nil pointer fields produce empty value (unsupported type)
+	expected := "ptr "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestConfigToString_AllScalarTypes(t *testing.T) {
+	t.Parallel()
+
+	type testStruct struct {
+		Name    string  `quark:"name"`
+		Count   int     `quark:"count"`
+		Enabled bool    `quark:"enabled"`
+		Ratio   float64 `quark:"ratio"`
+	}
+
+	s := testStruct{
+		Name:    "test",
+		Count:   42,
+		Enabled: true,
+		Ratio:   3.14,
+	}
+
+	result := serializable.ConfigToString(s)
+
+	// All scalar types work
+	expected := "nametest count42 enabledtrue ratio3.14 "
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}

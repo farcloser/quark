@@ -1,4 +1,4 @@
-package fault //revive:disable-line:var-naming
+package fault
 
 import "errors"
 
@@ -19,14 +19,14 @@ var (
 	ErrInvalidArgument = errors.New("invalid argument")
 
 	// ErrNotFound indicates the requested resource (file, image, etc.) could not be found.
-	ErrNotFound = errors.New("failed to retrieve resource")
+	ErrNotFound = errors.New("resource not found")
 
 	// ErrReadFailure indicates the resource (file, image) could not be read (network, filesystem, permission error).
 	ErrReadFailure = errors.New("failed to read resource")
 
 	// ErrWriteFailure indicates the resource (file, image) could not be written to (network, filesystem, permission
 	// error).
-	ErrWriteFailure = errors.New("failed to read resource")
+	ErrWriteFailure = errors.New("failed to write resource")
 
 	// ErrAuthenticationFailure indicates an authentication attempt failed.
 	ErrAuthenticationFailure = errors.New("failed to authenticate")

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/farcloser/quark/dev/network"
+	"github.com/farcloser/quark/pkg/core/network"
 )
 
 //nolint:gochecknoglobals // Singleton pattern: global cert pool modified via TrustRoot, used by all HTTP clients.

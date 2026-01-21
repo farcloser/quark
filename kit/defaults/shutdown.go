@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/farcloser/quark/dev/store"
+	"github.com/farcloser/quark/pkg/dev/store"
 )
 
 const shutdownTimeout = 10 * time.Second

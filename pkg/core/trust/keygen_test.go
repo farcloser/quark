@@ -8,6 +8,9 @@ import (
 	"encoding/pem"
 	"testing"
 
+	"golang.org/x/crypto/nacl/secretbox"
+	"golang.org/x/crypto/scrypt"
+
 	"github.com/farcloser/quark/pkg/core/trust"
 )
 
@@ -199,5 +202,145 @@ func TestGenerateKeyPair_Uniqueness(t *testing.T) {
 
 	if string(kp1.PrivateKey) == string(kp2.PrivateKey) {
 		t.Error("subsequent calls should generate different key pairs")
+	}
+}
+
+// INTENTION: Encrypted private key should be decryptable with correct password
+// and the decrypted key should match the public key.
+func TestGenerateKeyPair_DecryptionRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	password := []byte("test-password-roundtrip")
+	kp := trust.GenerateKeyPair(password)
+
+	// Parse the public key for later comparison
+	pubBlock, _ := pem.Decode(kp.PublicKey)
+	if pubBlock == nil {
+		t.Fatal("failed to decode public key PEM")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
+	if err != nil {
+		t.Fatalf("failed to parse public key: %v", err)
+	}
+
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("expected *ecdsa.PublicKey, got %T", pub)
+	}
+
+	// Parse the encrypted private key
+	privBlock, _ := pem.Decode(kp.PrivateKey)
+	if privBlock == nil {
+		t.Fatal("failed to decode private key PEM")
+	}
+
+	// Extract salt and nonce from headers
+	saltB64, ok := privBlock.Headers["salt"]
+	if !ok {
+		t.Fatal("missing salt header")
+	}
+
+	salt, err := base64.StdEncoding.DecodeString(saltB64)
+	if err != nil {
+		t.Fatalf("failed to decode salt: %v", err)
+	}
+
+	nonceB64, ok := privBlock.Headers["nonce"]
+	if !ok {
+		t.Fatal("missing nonce header")
+	}
+
+	nonceBytes, err := base64.StdEncoding.DecodeString(nonceB64)
+	if err != nil {
+		t.Fatalf("failed to decode nonce: %v", err)
+	}
+
+	var nonce [24]byte
+	copy(nonce[:], nonceBytes)
+
+	// Derive key using scrypt with same parameters as encryption
+	const (
+		scryptN      = 32768
+		scryptR      = 8
+		scryptP      = 1
+		scryptKeyLen = 32
+	)
+
+	key, err := scrypt.Key(password, salt, scryptN, scryptR, scryptP, scryptKeyLen)
+	if err != nil {
+		t.Fatalf("failed to derive key: %v", err)
+	}
+
+	var secretKey [32]byte
+	copy(secretKey[:], key)
+
+	// Decrypt using nacl secretbox
+	decrypted, ok := secretbox.Open(nil, privBlock.Bytes, &nonce, &secretKey)
+	if !ok {
+		t.Fatal("failed to decrypt private key - secretbox.Open returned false")
+	}
+
+	// Parse the decrypted private key
+	priv, err := x509.ParsePKCS8PrivateKey(decrypted)
+	if err != nil {
+		t.Fatalf("failed to parse decrypted private key: %v", err)
+	}
+
+	ecPriv, ok := priv.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("expected *ecdsa.PrivateKey, got %T", priv)
+	}
+
+	// Verify the decrypted private key's public key matches the original public key
+	if !ecPub.Equal(&ecPriv.PublicKey) {
+		t.Error("decrypted private key does not match public key")
+	}
+}
+
+// INTENTION: Decryption with wrong password should fail.
+func TestGenerateKeyPair_DecryptionWithWrongPassword(t *testing.T) {
+	t.Parallel()
+
+	password := []byte("correct-password")
+	wrongPassword := []byte("wrong-password")
+	kp := trust.GenerateKeyPair(password)
+
+	// Parse the encrypted private key
+	privBlock, _ := pem.Decode(kp.PrivateKey)
+	if privBlock == nil {
+		t.Fatal("failed to decode private key PEM")
+	}
+
+	// Extract salt and nonce
+	saltB64 := privBlock.Headers["salt"]
+	salt, _ := base64.StdEncoding.DecodeString(saltB64)
+
+	nonceB64 := privBlock.Headers["nonce"]
+	nonceBytes, _ := base64.StdEncoding.DecodeString(nonceB64)
+
+	var nonce [24]byte
+	copy(nonce[:], nonceBytes)
+
+	// Derive key with WRONG password
+	const (
+		scryptN      = 32768
+		scryptR      = 8
+		scryptP      = 1
+		scryptKeyLen = 32
+	)
+
+	key, err := scrypt.Key(wrongPassword, salt, scryptN, scryptR, scryptP, scryptKeyLen)
+	if err != nil {
+		t.Fatalf("failed to derive key: %v", err)
+	}
+
+	var secretKey [32]byte
+	copy(secretKey[:], key)
+
+	// Attempt to decrypt - should fail
+	_, ok := secretbox.Open(nil, privBlock.Bytes, &nonce, &secretKey)
+	if ok {
+		t.Error("decryption with wrong password should fail")
 	}
 }

@@ -13,31 +13,30 @@ import (
 // This allows NewTransport to clone from it.
 //
 //nolint:gochecknoglobals // Package-level reference needed for cloning.
-var defaultTransport *http.Transport
+var (
+	defaultTransport *http.Transport
 
-// RetryStatusCodes contains HTTP status codes that indicate retryable errors.
-// This list is used both for logging in RoundTripper and can be passed to
-// libraries like go-containerregistry via remote.WithRetryStatusCodes().
-//
-//nolint:gochecknoglobals // Package-level constant list of retry codes.
-var RetryStatusCodes = []int{
-	http.StatusTooManyRequests,     // 429 - Rate limit
-	http.StatusInternalServerError, // 500 - Server error
-	http.StatusBadGateway,          // 502 - Proxy error
-	http.StatusServiceUnavailable,  // 503 - Service overloaded
-	http.StatusGatewayTimeout,      // 504 - Upstream timeout
-}
+	// RetryStatusCodes contains HTTP status codes that indicate retryable errors.
+	// This list is used both for logging in RoundTripper and can be passed to
+	// libraries like go-containerregistry via remote.WithRetryStatusCodes().
+	RetryStatusCodes = []int{
+		http.StatusTooManyRequests,     // 429 - Rate limit
+		http.StatusInternalServerError, // 500 - Server error
+		http.StatusBadGateway,          // 502 - Proxy error
+		http.StatusServiceUnavailable,  // 503 - Service overloaded
+		http.StatusGatewayTimeout,      // 504 - Upstream timeout
+	}
 
-// retryReasons maps status codes to human-readable reasons for logging.
-//
-//nolint:gochecknoglobals // Package-level map used by RoundTripper.
-var retryReasons = map[int]string{
-	http.StatusTooManyRequests:     "rate limited",
-	http.StatusInternalServerError: "server error",
-	http.StatusBadGateway:          "bad gateway",
-	http.StatusServiceUnavailable:  "service unavailable",
-	http.StatusGatewayTimeout:      "gateway timeout",
-}
+	// retryReasons maps status codes to human-readable reasons for logging.
+	//
+	retryReasons = map[int]string{
+		http.StatusTooManyRequests:     "rate limited",
+		http.StatusInternalServerError: "server error",
+		http.StatusBadGateway:          "bad gateway",
+		http.StatusServiceUnavailable:  "service unavailable",
+		http.StatusGatewayTimeout:      "gateway timeout",
+	}
+)
 
 // Transport wraps *http.Transport to expose TLSClientConfig for modification.
 type Transport struct {
@@ -73,6 +72,8 @@ func NewTransport() *RoundTripper {
 // RoundTrip implements http.RoundTripper.
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if rt.TokenValue != "" {
+		// Ensure we don't leak that if the req is getting reused.
+		req = req.Clone(req.Context())
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", rt.TokenType, rt.TokenValue))
 	}
 
@@ -82,7 +83,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	if reason, isRetryable := retryReasons[resp.StatusCode]; isRetryable {
-		slog.WarnContext(req.Context(), "HTTP request received retryable status",
+		slog.DebugContext(req.Context(), "HTTP request received retryable status",
 			slog.String("url", req.URL.String()),
 			slog.Int("status", resp.StatusCode),
 			slog.String("reason", reason))
@@ -107,6 +108,7 @@ const (
 	dialTimeout           = 30 * time.Second
 	dialKeepAlive         = 30 * time.Second
 	tlsHandshakeTimeout   = 10 * time.Second
+	responseHeaderTimeout = 30 * time.Second
 	idleConnTimeout       = 90 * time.Second
 	expectContinueTimeout = 1 * time.Second
 	maxIdleConns          = 100
@@ -136,6 +138,7 @@ func SetDefaults() {
 
 	// Timeout configuration
 	transport.TLSHandshakeTimeout = tlsHandshakeTimeout
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	transport.IdleConnTimeout = idleConnTimeout
 	transport.ExpectContinueTimeout = expectContinueTimeout
 

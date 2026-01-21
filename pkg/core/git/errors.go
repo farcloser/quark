@@ -9,11 +9,15 @@ var (
 	ErrNoCommits = errors.New("no commits in repository")
 	// ErrNonFastForward indicates the push was rejected.
 	ErrNonFastForward = errors.New("non-fast-forward update rejected")
+	// ErrRemoteNoURLs indicates the remote has no configured URLs.
+	ErrRemoteNoURLs = errors.New("remote has no URLs")
 
 	// Signing.
 
 	// ErrSignatureSigningFailed failed to sign commit.
 	ErrSignatureSigningFailed = errors.New("signing failed")
+	// ErrSigningNotConfigured indicates git is not configured for SSH signing.
+	ErrSigningNotConfigured = errors.New("SSH signing not configured")
 
 	// Verifications.
 

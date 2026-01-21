@@ -75,14 +75,14 @@ func (r *Repo) GetCommitSigner(hash string) (sigInfo *SignatureInfo, err error) 
 	// The commit content is everything except the signature itself.
 	commitContent, err := buildCommitContent(commit)
 	if err != nil {
-		return sigInfo, err
+		return nil, err
 	}
 
 	signedData := buildSSHSignedData(sshSigNamespace, sshSigHashAlgo, commitContent)
 
 	// Verify the signature.
 	if err := pubKey.Verify(signedData, sigBlob); err != nil {
-		return sigInfo, fmt.Errorf("%w: %w", ErrSignatureVerificationFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrSignatureVerificationFailed, err)
 	}
 
 	return sigInfo, nil

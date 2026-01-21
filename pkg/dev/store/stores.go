@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/farcloser/quark/pkg/core/digest"
 	"github.com/farcloser/quark/pkg/core/filesystem"
 	"github.com/farcloser/quark/pkg/fault"
 )
@@ -45,7 +46,7 @@ func GetStoreVolatile() *Volatile {
 			panic(fmt.Errorf("%w: %w", fault.ErrSystemFailure, err))
 		}
 
-		volatileStore = NewVolatile(filepath.Join(runtimeDir, volatileSubdir))
+		volatileStore = NewVolatile(filepath.Join(runtimeDir, volatileSubdir), digest.BLAKE2b256)
 	})
 
 	return volatileStore

@@ -1,8 +1,8 @@
 package defaults
 
 import (
-	devsecrets "github.com/farcloser/quark/dev/secrets"
 	intsecrets "github.com/farcloser/quark/internal/secrets"
+	devsecrets "github.com/farcloser/quark/pkg/dev/secrets"
 )
 
 // SetDefaultsForSecrets registers the default backends (1Password, Vault).

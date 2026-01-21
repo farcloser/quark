@@ -1,4 +1,3 @@
-//nolint:revive // use-waitgroup-go pattern is fine for tests
 package store_test
 
 import (
@@ -9,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/farcloser/quark/dev/store"
+	"github.com/farcloser/quark/pkg/core/digest"
+	"github.com/farcloser/quark/pkg/dev/store"
 )
 
 func TestVolatile_ConcurrentAcquire(t *testing.T) {
@@ -21,7 +21,7 @@ func TestVolatile_ConcurrentAcquire(t *testing.T) {
 	)
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 	content := []byte("shared secret content")
 
 	var (
@@ -117,7 +117,7 @@ func TestVolatile_ConcurrentAcquireDifferentContent(t *testing.T) {
 	const numGoroutines = 50
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 
 	var (
 		wg    sync.WaitGroup
@@ -151,7 +151,7 @@ func TestVolatile_ConcurrentAcquireDifferentContent(t *testing.T) {
 	// All paths should be different (different content = different paths)
 	seen := make(map[string]bool)
 
-	paths.Range(func(key, value any) bool {
+	paths.Range(func(_, value any) bool {
 		p := value.(string)
 		if seen[p] {
 			t.Errorf("duplicate path found: %s", p)
@@ -179,7 +179,7 @@ func TestVolatile_StaggeredRelease(t *testing.T) {
 	const numGoroutines = 20
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 	content := []byte("staggered content")
 
 	var wg sync.WaitGroup
@@ -236,7 +236,7 @@ func TestVolatile_RapidAcquireRelease(t *testing.T) {
 	)
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 
 	var wg sync.WaitGroup
 
@@ -291,7 +291,7 @@ func TestVolatile_AcquireAfterFullRelease(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 	content := []byte("reacquire content")
 
 	// First acquire and release
@@ -340,7 +340,7 @@ func TestVolatile_EmptyContent(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 	content := []byte{}
 
 	path, release, err := volatile.Acquire(content)
@@ -365,7 +365,7 @@ func TestVolatile_LargeContent(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 
 	// 1MB of content
 	content := make([]byte, 1024*1024)
@@ -402,7 +402,7 @@ func TestVolatile_ContentAddressed(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	volatile := store.NewVolatile(root)
+	volatile := store.NewVolatile(root, digest.SHA256)
 
 	content1 := []byte("same content")
 	content2 := []byte("same content")
@@ -436,7 +436,7 @@ func TestVolatile_ContentAddressed(t *testing.T) {
 
 	// Different content = different path
 	if path1 == path3 {
-		t.Errorf("different content should produce different path")
+		t.Error("different content should produce different path")
 	}
 
 	// Verify directories are different
@@ -444,6 +444,84 @@ func TestVolatile_ContentAddressed(t *testing.T) {
 	dir3 := filepath.Dir(path3)
 
 	if dir1 == dir3 {
-		t.Errorf("different content should be in different directories")
+		t.Error("different content should be in different directories")
+	}
+}
+
+func TestVolatile_DifferentAlgorithms(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	content := []byte("test content for algorithm comparison")
+
+	algorithms := []digest.Algorithm{
+		digest.SHA1,
+		digest.SHA256,
+		digest.SHA384,
+		digest.SHA512,
+		digest.BLAKE2b256,
+		digest.BLAKE2b512,
+	}
+
+	paths := make(map[digest.Algorithm]string)
+
+	for _, alg := range algorithms {
+		volatile := store.NewVolatile(filepath.Join(root, string(alg)), alg)
+
+		path, release, err := volatile.Acquire(content)
+		if err != nil {
+			t.Fatalf("acquire with %s failed: %v", alg, err)
+		}
+
+		// Verify content is correct
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read with %s failed: %v", alg, err)
+		}
+
+		if string(data) != string(content) {
+			t.Errorf("content mismatch with %s", alg)
+		}
+
+		paths[alg] = filepath.Base(filepath.Dir(path)) // Get the digest directory name
+
+		release()
+	}
+
+	// All algorithms should produce different digest directory names
+	seen := make(map[string]digest.Algorithm)
+	for alg, digestDir := range paths {
+		if prevAlg, exists := seen[digestDir]; exists {
+			t.Errorf("algorithms %s and %s produced same digest directory: %s", prevAlg, alg, digestDir)
+		}
+
+		seen[digestDir] = alg
+	}
+}
+
+func TestVolatile_AlgorithmConsistency(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	content := []byte("consistency test content")
+
+	// Same content, same algorithm, different instances should produce same path
+	volatile1 := store.NewVolatile(root, digest.SHA512)
+	volatile2 := store.NewVolatile(root, digest.SHA512)
+
+	path1, release1, err := volatile1.Acquire(content)
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	defer release1()
+
+	path2, release2, err := volatile2.Acquire(content)
+	if err != nil {
+		t.Fatalf("second acquire failed: %v", err)
+	}
+	defer release2()
+
+	if path1 != path2 {
+		t.Errorf("same algorithm should produce same path: %q vs %q", path1, path2)
 	}
 }

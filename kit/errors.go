@@ -1,7 +1,7 @@
 package kit
 
 import (
-	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // XXX fix this.

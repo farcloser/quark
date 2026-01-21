@@ -1,8 +1,8 @@
 package kit
 
 import (
-	devsecrets "github.com/farcloser/quark/dev/secrets"
 	intsecrets "github.com/farcloser/quark/internal/secrets"
+	devsecrets "github.com/farcloser/quark/pkg/dev/secrets"
 )
 
 // VaultBackendConfig provides optional configuration overrides for VaultBackend.

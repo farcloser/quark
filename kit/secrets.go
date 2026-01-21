@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/farcloser/quark/dev/fault"
-	devsecrets "github.com/farcloser/quark/dev/secrets"
+	secrets2 "github.com/farcloser/quark/pkg/dev/secrets"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // AddSecretsBackend configures and registers a secrets backend.
@@ -34,13 +34,13 @@ import (
 //	}); err != nil {
 //	    return err
 //	}
-func AddSecretsBackend(ctx context.Context, config devsecrets.BackendConfig) error {
+func AddSecretsBackend(ctx context.Context, config secrets2.BackendConfig) error {
 	backend, err := config.CreateBackend(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: %w", fault.ErrAuthenticationFailure, err)
 	}
 
-	devsecrets.GetResolver().Register(backend)
+	secrets2.GetResolver().Register(backend)
 
 	return nil
 }
@@ -64,7 +64,7 @@ func AddSecretsBackend(ctx context.Context, config devsecrets.BackendConfig) err
 //
 // Returns the raw document content as bytes (no JSON parsing for age/op, JSON for vault).
 func GetSecretDocument(ctx context.Context, uri string) ([]byte, error) {
-	data, err := devsecrets.GetResolver().ResolveDocument(ctx, uri)
+	data, err := secrets2.GetResolver().ResolveDocument(ctx, uri)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrSecretsReadFailed, err)
 	}
@@ -94,7 +94,7 @@ func GetSecretDocument(ctx context.Context, uri string) ([]byte, error) {
 //
 // Returns a map of field names to their string values.
 func GetSecret(ctx context.Context, uri string, fields []string) (map[string]string, error) {
-	result, err := devsecrets.GetResolver().Resolve(ctx, uri, fields)
+	result, err := secrets2.GetResolver().Resolve(ctx, uri, fields)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrSecretsReadFailed, err)
 	}

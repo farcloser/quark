@@ -38,7 +38,7 @@ func (f *Display) MarshalJSON() ([]byte, error) {
 func (f *Display) UnmarshalJSON(data []byte) error {
 	var str string
 	if err := json.Unmarshal(data, &str); err != nil {
-		return fmt.Errorf("%w: %w %q (valid: table, json, sarif)", fault.ErrInvalidArgument, err, str)
+		return fmt.Errorf("%w: %w (valid: table, json, sarif)", fault.ErrInvalidArgument, err)
 	}
 
 	// Normalize to lowercase
