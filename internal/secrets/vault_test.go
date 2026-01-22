@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/farcloser/quark/pkg/fault"
 	"github.com/hashicorp/vault/api"
 
-	"github.com/farcloser/quark/dev/fault"
 	"github.com/farcloser/quark/internal/secrets"
 	testvault "github.com/farcloser/quark/testutil/vault"
 )

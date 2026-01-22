@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/internal/network"
 	"github.com/farcloser/quark/internal/registry2"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 //artifactTypeSigstoreBundle   = ArtifactType(LayerMediaTypeSigstoreBundle)

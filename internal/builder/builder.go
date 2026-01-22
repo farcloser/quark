@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/farcloser/quark/dev/store"
+	"github.com/farcloser/quark/pkg/dev/store"
 )
 
 // PrepareSecrets writes secrets to content-addressed files and returns SecretFile handles.

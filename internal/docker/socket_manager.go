@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/dev/sock"
-	"github.com/farcloser/quark/dev/ssh"
+	"github.com/farcloser/quark/pkg/dev/ssh"
+	"github.com/farcloser/quark/pkg/dev/tunnel"
 )
 
 const (
@@ -16,14 +16,14 @@ const (
 // ManagedSocket represents a tunneled Docker socket.
 // Safe for concurrent access within the same process.
 type ManagedSocket struct {
-	tunnel *sock.Tunnel
+	tunnel *tunnel.Tunnel
 }
 
 // AcquireSocket gets or creates a managed docker socket for the given SSH connection.
 // Multiple callers within the same process will share the same socket.
 // Call Release() when done to allow cleanup when all holders release.
 func AcquireSocket(conn ssh.Connection, log *slog.Logger) (*ManagedSocket, error) {
-	tunnel, err := sock.Acquire(conn, remoteDockerSocket, log)
+	tunnel, err := tunnel.Acquire(conn, remoteDockerSocket, log)
 	if err != nil {
 		return nil, fmt.Errorf("docker socket: %w", err)
 	}

@@ -5,9 +5,8 @@ import (
 	"fmt"
 
 	"filippo.io/age"
-
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/secrets"
+	"github.com/farcloser/quark/pkg/dev/secrets"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // VaultConfig configures the Vault backend.

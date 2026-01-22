@@ -13,9 +13,9 @@ import (
 	"log/slog"
 	"maps"
 
-	"github.com/farcloser/quark/dev/trust"
 	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/pkg/core/trust"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/static"

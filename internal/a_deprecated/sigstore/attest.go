@@ -17,8 +17,8 @@ import (
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	"github.com/sigstore/sigstore-go/pkg/sign"
 
-	"github.com/farcloser/quark/dev/version"
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/pkg/version"
 	"github.com/farcloser/quark/sdk/attest"
 )
 
@@ -438,7 +438,7 @@ func generateVEXPredicate(statements []*attest.Statement) ([]byte, error) {
 	doc := openVEXDocument{
 		Context:   "https://openvex.dev/ns/v0.2.0",
 		ID:        fmt.Sprintf("urn:uuid:quark-vex-%d", time.Now().UnixNano()),
-		Author:    version.Name,
+		Author:    version.Name(),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Version:   1,
 	}

@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/farcloser/quark/pkg/fault"
 	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/opencontainers/go-digest"
 
-	"github.com/farcloser/quark/dev/fault"
 	quarktypes "github.com/farcloser/quark/internal/types"
 )
 

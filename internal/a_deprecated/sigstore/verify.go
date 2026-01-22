@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/dev/trust"
 	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/core/trust"
 	"github.com/google/go-containerregistry/pkg/v1"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"

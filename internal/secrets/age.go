@@ -9,8 +9,7 @@ import (
 	"strings"
 
 	"filippo.io/age"
-
-	"github.com/farcloser/quark/dev/fault"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // AgeBackend implements secret resolution using age encryption.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/tools"
+	"github.com/farcloser/quark/pkg/dev/tools"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // Severity levels for vulnerability findings.
@@ -95,7 +95,7 @@ func NewScanner(ctx context.Context, log *slog.Logger) (Scanner, error) {
 
 	var err error
 	// Ensure trivy is installed
-	scanner.trivyPath, err = tools.NewGoInstaller(log, trivyTool).Ensure(ctx)
+	scanner.trivyPath, err = trivyTool.Ensure(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", fault.ErrMissingRequirements, err)
 	}
