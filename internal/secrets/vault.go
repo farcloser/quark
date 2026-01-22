@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/farcloser/quark/pkg/dev/secrets"
 	"github.com/hashicorp/vault/api"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/secrets"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // VaultBackend implements secret resolution using HashiCorp Vault KV v2.

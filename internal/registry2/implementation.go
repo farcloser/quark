@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/farcloser/quark/pkg/core/network"
+	"github.com/farcloser/quark/pkg/dev/store"
+	"github.com/farcloser/quark/pkg/fault"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1"
@@ -18,9 +22,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	gcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/network"
-	"github.com/farcloser/quark/dev/store"
 	"github.com/farcloser/quark/internal/types"
 )
 
@@ -71,7 +72,7 @@ func (*client) ResolveDigest(
 	return types.Digest(desc.Digest.String()), nil
 }
 
-func (*client) ReadManifest(ctx context.Context, img *types.Image) (*Content, error) {
+func (c *client) ReadManifest(ctx context.Context, img *types.Image) (*Content, error) {
 	if img.Digest == "" {
 		return nil, fmt.Errorf("%w: image must have digest", fault.ErrInvalidArgument)
 	}
@@ -85,11 +86,25 @@ func (*client) ReadManifest(ctx context.Context, img *types.Image) (*Content, er
 	}
 
 	if writer == nil {
-		// Cache hit - read from cache
+		// Cache hit - read from cache.
+		// Note: "hit" includes two cases:
+		//   1. Complete data exists (true cache hit)
+		//   2. Another goroutine is writing (we get an inProgressReader that tails their write)
+		//
+		// Case 2 can fail with ErrWriteFailure if the other writer fails (e.g., registry
+		// returns 404). When this happens, we retry: the failed writer has released its
+		// lock, so we'll become the writer and fetch from the registry ourselves, getting
+		// the actual error (e.g., ErrNotFound) instead of a generic ErrWriteFailure.
 		defer reader.Close()
 
 		raw, err := io.ReadAll(reader)
 		if err != nil {
+			if errors.Is(err, fault.ErrWriteFailure) {
+				slog.WarnContext(ctx, "cache writer failed, retrying as writer")
+
+				return c.ReadManifest(ctx, img)
+			}
+
 			return nil, fmt.Errorf("%w: %w", ErrRegistryOperationFailed, err)
 		}
 
@@ -173,7 +188,7 @@ func (*client) ListReferrers(ctx context.Context, img *types.Image) (*Content, e
 	return NewContent(raw, ""), nil
 }
 
-func (*client) ReadBlob(
+func (c *client) ReadBlob(
 	ctx context.Context,
 	img *types.Image,
 	digest types.Digest,
@@ -187,7 +202,11 @@ func (*client) ReadBlob(
 	}
 
 	if writer == nil {
-		// Cache hit - return reader directly
+		// Cache hit - return reader directly.
+		// Note: same inProgressReader issue as ReadManifest (see comment there).
+		// For blobs we return the reader for streaming, so we can't retry here.
+		// If the underlying writer fails, caller gets ErrWriteFailure when reading.
+		// TODO: wrap reader to retry on ErrWriteFailure if needed.
 		return reader, nil
 	}
 

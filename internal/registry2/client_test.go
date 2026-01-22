@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/farcloser/quark/pkg/fault"
 	"github.com/opencontainers/go-digest"
 	"gotest.tools/v3/assert"
 
-	"github.com/farcloser/quark/dev/fault"
 	"github.com/farcloser/quark/internal/registry2"
 	"github.com/farcloser/quark/internal/types"
 	testreg "github.com/farcloser/quark/testutil/registry"
@@ -648,7 +648,7 @@ func TestReadBlob_NonExistentBlob(t *testing.T) {
 	tr := newTestRegistry(t)
 	client := registry2.NewClient()
 
-	fakeDigest := digest.FromString("nonexistent")
+	fakeDigest := digest.FromString("nonexistent-blob")
 	img := tr.image("test/repo", "")
 
 	_, err := client.ReadBlob(context.Background(), img, fakeDigest)

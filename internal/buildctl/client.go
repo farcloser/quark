@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/ssh"
-	"github.com/farcloser/quark/dev/utilities"
 	"github.com/farcloser/quark/internal/builder"
 	"github.com/farcloser/quark/internal/docker"
+	"github.com/farcloser/quark/pkg/core/trust"
+	"github.com/farcloser/quark/pkg/dev/ssh"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // Client wraps buildctl operations via SSH-tunneled docker socket.
@@ -256,7 +256,7 @@ func (c *Client) createMetadataFile() string {
 	socketDir := filepath.Dir(c.dockerSocket.SocketPath())
 
 	// Generate random suffix to avoid collisions between concurrent builds
-	filename := fmt.Sprintf("build-%s.json", utilities.GenerateProcessToken())
+	filename := fmt.Sprintf("build-%s.json", trust.GenerateRandomIdentifier())
 
 	return filepath.Join(socketDir, filename)
 }

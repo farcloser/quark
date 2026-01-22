@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/tools"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/dev/tools"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 //nolint:gochecknoglobals
@@ -46,7 +46,7 @@ func NewScanner(ctx context.Context, log *slog.Logger) (Scanner, error) {
 
 	var err error
 	// Ensure dockle is installed
-	scanner.docklePath, err = tools.NewGoInstaller(log, dockleTool).Ensure(ctx)
+	scanner.docklePath, err = dockleTool.Ensure(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", fault.ErrMissingRequirements, err)
 	}

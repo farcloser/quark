@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/farcloser/quark/dev/fault"
-	devsecrets "github.com/farcloser/quark/dev/secrets"
+	devsecrets "github.com/farcloser/quark/pkg/dev/secrets"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 const (

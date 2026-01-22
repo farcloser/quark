@@ -8,9 +8,8 @@ import (
 	"strings"
 
 	"github.com/farcloser/quark/internal/registry2"
-	"github.com/farcloser/quark/internal/schemas"
-	"github.com/farcloser/quark/internal/signature"
 	"github.com/farcloser/quark/internal/types"
+	"github.com/farcloser/quark/pkg/sys/signature"
 )
 
 type SBOM struct {

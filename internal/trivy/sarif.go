@@ -1,8 +1,8 @@
 package trivy
 
 import (
-	"github.com/farcloser/quark/dev/format"
-	"github.com/farcloser/quark/dev/format/sarif"
+	"github.com/farcloser/quark/pkg/dev/format"
+	"github.com/farcloser/quark/pkg/dev/format/sarif"
 )
 
 // FormatSARIF converts Trivy scan results to SARIF format.

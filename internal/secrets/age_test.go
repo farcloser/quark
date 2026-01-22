@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"filippo.io/age"
+	"github.com/farcloser/quark/pkg/fault"
 
-	"github.com/farcloser/quark/dev/fault"
 	"github.com/farcloser/quark/internal/secrets"
 )
 

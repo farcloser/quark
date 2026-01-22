@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/farcloser/quark/dev/fault"
 	"github.com/farcloser/quark/internal/a_deprecated/registry"
 	"github.com/farcloser/quark/internal/reference"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 //nolint:gochecknoglobals

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/farcloser/quark/pkg/core/network"
+	errors2 "github.com/farcloser/quark/pkg/fault"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1"
@@ -20,8 +22,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
-	errors2 "github.com/farcloser/quark/dev/fault"
-	"github.com/farcloser/quark/dev/network"
 	"github.com/farcloser/quark/internal/reference"
 	types2 "github.com/farcloser/quark/internal/types"
 )

@@ -4,16 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 
-	"github.com/farcloser/quark/dev/fault"
-	tools2 "github.com/farcloser/quark/dev/tools"
+	"github.com/farcloser/quark/pkg/dev/tools"
+	"github.com/farcloser/quark/pkg/fault"
 )
 
 // buildctlRelease defines the buildctl GitHub release configuration.
 //
 //nolint:gochecknoglobals
-var buildctlRelease = tools2.GithubRelease{
+var buildctlRelease = tools.HTTPRelease{
 	Name:    "buildctl",
 	Version: "v0.26.2",
 	// URL format: https://github.com/moby/buildkit/releases/download/v0.26.2/buildkit-v0.26.2.darwin-arm64.tar.gz
@@ -21,7 +20,7 @@ var buildctlRelease = tools2.GithubRelease{
 	URLArgs: func(version, goos, goarch string) []any {
 		return []any{version, version, goos, goarch}
 	},
-	BinaryPathInArchive: "bin/buildctl",
+	PathInArchive: "bin/buildctl",
 	Checksums: map[string]string{
 		"darwin/amd64": "16728420213cb44070020f19165a1d1bc06f48e3e18149d5d6f7fee177f6c63f",
 		"darwin/arm64": "953ef5239e7404ee7d88430f8801e18127bb1fe38e29c3c2d45b1cf9b7460e69",
@@ -30,24 +29,12 @@ var buildctlRelease = tools2.GithubRelease{
 	},
 }
 
-// installer holds the package-level installer instance.
-//
-//nolint:gochecknoglobals
-var (
-	installer     tools2.Installer
-	installerOnce sync.Once
-)
-
 // EnsureBuildctl ensures buildctl is installed and returns the path to the binary.
 func EnsureBuildctl(ctx context.Context, log *slog.Logger) (string, error) {
-	installerOnce.Do(func() {
-		installer = tools2.NewGithubInstaller(log, buildctlRelease)
-	})
-
-	path, err := installer.Ensure(ctx)
+	installer, err := buildctlRelease.Ensure(ctx)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", fault.ErrMissingRequirements, err)
 	}
 
-	return path, nil
+	return installer, nil
 }
